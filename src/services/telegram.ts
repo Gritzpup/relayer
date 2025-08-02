@@ -40,7 +40,13 @@ export class TelegramService implements PlatformService {
 
       this.status.messagesReceived++;
       const username = msg.from?.username || msg.from?.first_name || 'Unknown';
-      logPlatformMessage('Telegram', 'in', msg.text || '[Media]', username);
+      
+      // Debug logging for stickers
+      if (msg.sticker) {
+        logger.debug(`Sticker received - text: "${msg.text}", caption: "${msg.caption}", emoji: "${msg.sticker.emoji}"`);
+      }
+      
+      logPlatformMessage('Telegram', 'in', msg.text || msg.caption || '[Media]', username);
 
       if (this.messageHandler) {
         const relayMessage = await this.convertMessage(msg);

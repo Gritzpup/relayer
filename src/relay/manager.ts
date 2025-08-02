@@ -120,6 +120,12 @@ export class RelayManager {
         attachments = undefined;
       }
 
+      // For Twitch, don't send sticker attachments (they're handled in the text)
+      if (targetPlatform === Platform.Twitch && attachments) {
+        attachments = attachments.filter(att => att.type !== 'sticker');
+        if (attachments.length === 0) attachments = undefined;
+      }
+
       await service.sendMessage(formattedContent, attachments);
       this.rateLimiter.recordMessage(targetPlatform, formattedContent, attachments);
       

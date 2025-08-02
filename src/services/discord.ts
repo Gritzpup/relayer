@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, TextChannel, Message, AttachmentBuilder } from 'discord.js';
+import { Client, GatewayIntentBits, TextChannel, Message, AttachmentBuilder, EmbedBuilder } from 'discord.js';
 import { config } from '../config';
 import { Platform, RelayMessage, MessageHandler, PlatformService, ServiceStatus, Attachment } from '../types';
 import { logger, logPlatformMessage, logError } from '../utils/logger';
@@ -104,19 +104,34 @@ export class DiscordService implements PlatformService {
     }
 
     const messageOptions: any = { content };
+    const embeds: EmbedBuilder[] = [];
 
     if (attachments && attachments.length > 0) {
-      const files = attachments.map(att => {
-        if (att.url) {
-          return att.url;
-        } else if (att.data) {
-          return new AttachmentBuilder(att.data, { name: att.filename || 'attachment' });
+      const regularAttachments: any[] = [];
+      
+      for (const att of attachments) {
+        if (att.type === 'sticker' && att.url) {
+          // Handle stickers as embeds for smaller size (similar to Telegram)
+          const embed = new EmbedBuilder()
+            .setImage(att.url)
+            .setColor(0x0099FF); // Light blue color
+          embeds.push(embed);
+        } else {
+          // Handle other attachments normally
+          if (att.url) {
+            regularAttachments.push(att.url);
+          } else if (att.data) {
+            regularAttachments.push(new AttachmentBuilder(att.data, { name: att.filename || 'attachment' }));
+          }
         }
-        return null;
-      }).filter(Boolean);
+      }
 
-      if (files.length > 0) {
-        messageOptions.files = files;
+      if (regularAttachments.length > 0) {
+        messageOptions.files = regularAttachments;
+      }
+      
+      if (embeds.length > 0) {
+        messageOptions.embeds = embeds;
       }
     }
 
