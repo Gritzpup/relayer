@@ -41,10 +41,22 @@ export class TelegramService implements PlatformService {
       this.status.messagesReceived++;
       const username = msg.from?.username || msg.from?.first_name || 'Unknown';
       
-      // Debug logging for stickers
+      // Debug logging for stickers and custom emojis
       if (msg.sticker) {
         logger.debug(`Sticker received - text: "${msg.text}", caption: "${msg.caption}", emoji: "${msg.sticker.emoji}"`);
       }
+      
+      // Check for custom emoji entities
+      if (msg.entities) {
+        logger.info(`Telegram message entities:`, JSON.stringify(msg.entities));
+      }
+      
+      // Log the full message structure for debugging
+      logger.debug(`Full Telegram message:`, JSON.stringify({
+        text: msg.text,
+        entities: msg.entities,
+        sticker: msg.sticker ? { emoji: msg.sticker.emoji, is_custom_emoji: msg.sticker.is_custom_emoji } : null,
+      }));
       
       logPlatformMessage('Telegram', 'in', msg.text || msg.caption || '[Media]', username);
 
@@ -177,6 +189,35 @@ export class TelegramService implements PlatformService {
   private async convertMessage(msg: TelegramBot.Message): Promise<RelayMessage> {
     const attachments: Attachment[] = [];
 
+    // Handle custom emoji entities
+    if (msg.entities && msg.text) {
+      for (const entity of msg.entities) {
+        if (entity.type === 'custom_emoji' && (entity as any).custom_emoji_id) {
+          try {
+            const customEmojiId = (entity as any).custom_emoji_id;
+            // Get the sticker data for this custom emoji
+            const stickerSet = await this.bot.getCustomEmojiStickers([customEmojiId]);
+            if (stickerSet && stickerSet.length > 0) {
+              const sticker = stickerSet[0];
+              const fileLink = await this.bot.getFileLink(sticker.file_id);
+              
+              // Extract the emoji text from the message
+              const emojiText = msg.text.substring(entity.offset, entity.offset + entity.length);
+              
+              attachments.push({
+                type: 'custom-emoji',
+                url: fileLink,
+                filename: 'custom_emoji.webp',
+                mimeType: 'image/webp',
+              });
+            }
+          } catch (error) {
+            logger.error('Failed to get custom emoji sticker:', error);
+          }
+        }
+      }
+    }
+
     if (msg.photo) {
       const largestPhoto = msg.photo[msg.photo.length - 1];
       const fileLink = await this.bot.getFileLink(largestPhoto.file_id);
@@ -222,6 +263,22 @@ export class TelegramService implements PlatformService {
     let content = msg.text || msg.caption || '';
     if (msg.sticker && !msg.text && !msg.caption) {
       content = '';
+    }
+    
+    // Remove custom emojis from text content since they're sent as images
+    if (msg.entities && msg.text && content) {
+      // Process entities in reverse order to maintain correct offsets
+      const customEmojiEntities = (msg.entities || [])
+        .filter(e => e.type === 'custom_emoji')
+        .sort((a, b) => b.offset - a.offset);
+      
+      for (const entity of customEmojiEntities) {
+        content = content.substring(0, entity.offset) + 
+                  content.substring(entity.offset + entity.length);
+      }
+      
+      // Trim any extra whitespace
+      content = content.trim();
     }
     
     return {

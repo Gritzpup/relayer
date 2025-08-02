@@ -120,9 +120,9 @@ export class RelayManager {
         attachments = undefined;
       }
 
-      // For Twitch, don't send sticker attachments (they're handled in the text)
+      // For Twitch, don't send sticker/custom-emoji attachments (they're handled in the text)
       if (targetPlatform === Platform.Twitch && attachments) {
-        attachments = attachments.filter(att => att.type !== 'sticker');
+        attachments = attachments.filter(att => att.type !== 'sticker' && att.type !== 'custom-emoji');
         if (attachments.length === 0) attachments = undefined;
       }
 

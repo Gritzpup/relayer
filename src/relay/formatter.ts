@@ -43,9 +43,8 @@ export class MessageFormatter {
         case 'custom-emoji':
           // For Discord/Telegram, don't add to text (will show as attachment)
           if (targetPlatform === Platform.Discord || targetPlatform === Platform.Telegram) return '';
-          // For Twitch, show the emoji name
-          const emojiName = att.filename?.replace(/\.(png|gif)$/, '') || 'emoji';
-          return `:${emojiName}:`;
+          // For Twitch, just show [emoji] since custom emojis can't be displayed
+          return '[emoji]';
         default:
           return '[Attachment]';
       }

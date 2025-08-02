@@ -51,10 +51,20 @@ export class DiscordService implements PlatformService {
       if (message.channel.id !== config.discord.channelId) return;
 
       this.status.messagesReceived++;
+      logger.info(`Discord raw message content: "${message.content}"`);
       logPlatformMessage('Discord', 'in', message.content, message.author.username);
 
       if (this.messageHandler) {
         const relayMessage = this.convertMessage(message);
+        
+        // Debug logging for custom emojis
+        if (relayMessage.attachments) {
+          const customEmojis = relayMessage.attachments.filter(a => a.type === 'custom-emoji');
+          if (customEmojis.length > 0) {
+            logger.info(`Custom emojis detected: ${customEmojis.map(e => e.filename).join(', ')}`);
+          }
+        }
+        
         try {
           await this.messageHandler(relayMessage);
         } catch (error) {
@@ -110,8 +120,8 @@ export class DiscordService implements PlatformService {
       const regularAttachments: any[] = [];
       
       for (const att of attachments) {
-        if (att.type === 'sticker' && att.url) {
-          // Handle stickers as embeds with thumbnail for smaller size
+        if ((att.type === 'sticker' || att.type === 'custom-emoji') && att.url) {
+          // Handle stickers and custom emojis as embeds with thumbnail for smaller size
           const embed = new EmbedBuilder()
             .setThumbnail(att.url)
             .setColor(0x36393f); // Discord dark theme background color to blend in
@@ -191,10 +201,13 @@ export class DiscordService implements PlatformService {
   private extractCustomEmojis(content: string): Array<{name: string, id: string, animated: boolean, url: string}> {
     const emojis: Array<{name: string, id: string, animated: boolean, url: string}> = [];
     
+    logger.info(`Checking for custom emojis in: "${content}"`);
+    
     // Match static custom emojis <:name:id>
     const staticEmojiRegex = /<:(\w+):(\d+)>/g;
     let match;
     while ((match = staticEmojiRegex.exec(content)) !== null) {
+      logger.info(`Found static emoji: ${match[0]} - name: ${match[1]}, id: ${match[2]}`);
       emojis.push({
         name: match[1],
         id: match[2],
@@ -206,6 +219,7 @@ export class DiscordService implements PlatformService {
     // Match animated custom emojis <a:name:id>
     const animatedEmojiRegex = /<a:(\w+):(\d+)>/g;
     while ((match = animatedEmojiRegex.exec(content)) !== null) {
+      logger.info(`Found animated emoji: ${match[0]} - name: ${match[1]}, id: ${match[2]}`);
       emojis.push({
         name: match[1],
         id: match[2],
@@ -214,6 +228,7 @@ export class DiscordService implements PlatformService {
       });
     }
     
+    logger.info(`Total custom emojis found: ${emojis.length}`);
     return emojis;
   }
 }
