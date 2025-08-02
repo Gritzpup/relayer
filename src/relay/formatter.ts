@@ -40,6 +40,12 @@ export class MessageFormatter {
           return '[Sticker]';
         case 'gif':
           return targetPlatform === Platform.Twitch && att.url ? att.url : '[GIF]';
+        case 'custom-emoji':
+          // For Discord/Telegram, don't add to text (will show as attachment)
+          if (targetPlatform === Platform.Discord || targetPlatform === Platform.Telegram) return '';
+          // For Twitch, show the emoji name
+          const emojiName = att.filename?.replace(/\.(png|gif)$/, '') || 'emoji';
+          return `:${emojiName}:`;
         default:
           return '[Attachment]';
       }

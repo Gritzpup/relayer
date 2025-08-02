@@ -156,6 +156,19 @@ export class DiscordService implements PlatformService {
       mimeType: att.contentType || undefined,
     }));
 
+    // Extract custom emojis from message content
+    const customEmojis = this.extractCustomEmojis(message.content);
+    if (customEmojis.length > 0) {
+      customEmojis.forEach(emoji => {
+        attachments.push({
+          type: 'custom-emoji' as any,
+          url: emoji.url,
+          filename: `${emoji.name}.${emoji.animated ? 'gif' : 'png'}`,
+          mimeType: emoji.animated ? 'image/gif' : 'image/png',
+        });
+      });
+    }
+
     return {
       id: message.id,
       platform: Platform.Discord,
@@ -173,5 +186,34 @@ export class DiscordService implements PlatformService {
     if (contentType.startsWith('image/')) return 'image';
     if (contentType.startsWith('video/')) return 'video';
     return 'file';
+  }
+
+  private extractCustomEmojis(content: string): Array<{name: string, id: string, animated: boolean, url: string}> {
+    const emojis: Array<{name: string, id: string, animated: boolean, url: string}> = [];
+    
+    // Match static custom emojis <:name:id>
+    const staticEmojiRegex = /<:(\w+):(\d+)>/g;
+    let match;
+    while ((match = staticEmojiRegex.exec(content)) !== null) {
+      emojis.push({
+        name: match[1],
+        id: match[2],
+        animated: false,
+        url: `https://cdn.discordapp.com/emojis/${match[2]}.png?size=48`, // size=48 for small emoji
+      });
+    }
+    
+    // Match animated custom emojis <a:name:id>
+    const animatedEmojiRegex = /<a:(\w+):(\d+)>/g;
+    while ((match = animatedEmojiRegex.exec(content)) !== null) {
+      emojis.push({
+        name: match[1],
+        id: match[2],
+        animated: true,
+        url: `https://cdn.discordapp.com/emojis/${match[2]}.gif?size=48`, // size=48 for small emoji
+      });
+    }
+    
+    return emojis;
   }
 }

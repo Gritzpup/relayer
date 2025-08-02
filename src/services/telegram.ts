@@ -101,7 +101,31 @@ export class TelegramService implements PlatformService {
 
     try {
       if (attachments && attachments.length > 0) {
-        for (const attachment of attachments) {
+        // Separate custom emojis from other attachments
+        const customEmojis = attachments.filter(a => a.type === 'custom-emoji');
+        const otherAttachments = attachments.filter(a => a.type !== 'custom-emoji');
+        
+        // Send custom emojis as a single message with multiple photos if possible
+        if (customEmojis.length > 0) {
+          // For multiple custom emojis, send them as an album (small, grouped)
+          if (customEmojis.length > 1) {
+            const media = customEmojis.map((emoji, index) => ({
+              type: 'photo' as const,
+              media: emoji.url!,
+              caption: index === 0 ? content : undefined,
+            }));
+            await this.bot.sendMediaGroup(chatId, media);
+          } else {
+            // Single custom emoji - send as small photo
+            await this.bot.sendPhoto(chatId, customEmojis[0].url!, { 
+              caption: content,
+              disable_notification: true, // Less intrusive for emojis
+            });
+          }
+        }
+        
+        // Handle other attachments normally
+        for (const attachment of otherAttachments) {
           if (attachment.type === 'image' || attachment.type === 'gif') {
             if (attachment.url) {
               await this.bot.sendPhoto(chatId, attachment.url, { caption: content });
@@ -121,6 +145,14 @@ export class TelegramService implements PlatformService {
               await this.bot.sendDocument(chatId, attachment.data, { caption: content });
             }
           }
+        }
+        
+        // If only custom emojis and no other attachments, and content wasn't sent with emojis
+        if (customEmojis.length > 0 && otherAttachments.length === 0 && content && customEmojis.length === 1) {
+          // Content was already sent with the emoji
+        } else if (otherAttachments.length === 0 && content && customEmojis.length === 0) {
+          // No attachments, just send text
+          await this.bot.sendMessage(chatId, content);
         }
       } else {
         await this.bot.sendMessage(chatId, content);

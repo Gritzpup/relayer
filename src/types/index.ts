@@ -15,7 +15,7 @@ export interface RelayMessage {
 }
 
 export interface Attachment {
-  type: 'image' | 'video' | 'file' | 'sticker' | 'gif';
+  type: 'image' | 'video' | 'file' | 'sticker' | 'gif' | 'custom-emoji';
   url?: string;
   data?: Buffer;
   filename?: string;
