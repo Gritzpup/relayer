@@ -30,7 +30,14 @@ export class MessageFormatter {
         case 'file':
           return `[File: ${att.filename || 'attachment'}]`;
         case 'sticker':
-          return att.url || '[Sticker]';
+          // For Discord, don't add to text (will show as attachment)
+          if (targetPlatform === Platform.Discord) return '';
+          // For Twitch, show emoji if available, otherwise [Sticker]
+          if (att.data) {
+            const emoji = att.data.toString();
+            return emoji || '[Sticker]';
+          }
+          return '[Sticker]';
         case 'gif':
           return targetPlatform === Platform.Twitch && att.url ? att.url : '[GIF]';
         default:
@@ -38,7 +45,7 @@ export class MessageFormatter {
       }
     });
 
-    return formattedAttachments.join(' ');
+    return formattedAttachments.filter(text => text !== '').join(' ');
   }
 
   private truncateMessage(message: string, platform: Platform): string {

@@ -167,9 +167,14 @@ export class TelegramService implements PlatformService {
     }
 
     if (msg.sticker) {
+      const fileLink = await this.bot.getFileLink(msg.sticker.file_id);
       attachments.push({
         type: 'sticker',
-        url: msg.sticker.emoji || '[Sticker]',
+        url: fileLink,
+        filename: 'sticker.webp',
+        mimeType: 'image/webp',
+        // Store emoji for Twitch display
+        data: msg.sticker.emoji ? Buffer.from(msg.sticker.emoji) : undefined,
       });
     }
 
