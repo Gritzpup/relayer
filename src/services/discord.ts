@@ -111,10 +111,10 @@ export class DiscordService implements PlatformService {
       
       for (const att of attachments) {
         if (att.type === 'sticker' && att.url) {
-          // Handle stickers as embeds for smaller size (similar to Telegram)
+          // Handle stickers as embeds with thumbnail for smaller size
           const embed = new EmbedBuilder()
-            .setImage(att.url)
-            .setColor(0x0099FF); // Light blue color
+            .setThumbnail(att.url)
+            .setColor(0x36393f); // Discord dark theme background color to blend in
           embeds.push(embed);
         } else {
           // Handle other attachments normally

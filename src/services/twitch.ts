@@ -52,6 +52,11 @@ export class TwitchService implements PlatformService {
     this.client.on('message', async (channel: string, tags: tmi.ChatUserstate, message: string, self: boolean) => {
       if (self) return;
       if (channel !== `#${config.twitch.channel}`) return;
+      // Also check if message is from our bot username
+      if (tags.username === config.twitch.username.toLowerCase()) return;
+      
+      // Skip messages that are already relayed (have platform prefix)
+      if (message.startsWith('[Discord]') || message.startsWith('[Telegram]')) return;
 
       this.status.messagesReceived++;
       const username = tags.username || 'Unknown';

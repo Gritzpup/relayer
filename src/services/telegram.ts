@@ -186,11 +186,17 @@ export class TelegramService implements PlatformService {
 
     const username = msg.from?.username || msg.from?.first_name || 'Unknown';
     
+    // For sticker-only messages, don't include the emoji in content (it's handled by formatter)
+    let content = msg.text || msg.caption || '';
+    if (msg.sticker && !msg.text && !msg.caption) {
+      content = '';
+    }
+    
     return {
       id: msg.message_id.toString(),
       platform: Platform.Telegram,
       author: username,
-      content: msg.text || msg.caption || '',
+      content: content,
       timestamp: new Date(msg.date * 1000),
       attachments: attachments.length > 0 ? attachments : undefined,
       raw: msg,
