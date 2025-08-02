@@ -1,0 +1,50 @@
+export enum Platform {
+  Discord = 'Discord',
+  Telegram = 'Telegram',
+  Twitch = 'Twitch',
+}
+
+export interface RelayMessage {
+  id: string;
+  platform: Platform;
+  author: string;
+  content: string;
+  timestamp: Date;
+  attachments?: Attachment[];
+  raw?: any;
+}
+
+export interface Attachment {
+  type: 'image' | 'video' | 'file' | 'sticker' | 'gif';
+  url?: string;
+  data?: Buffer;
+  filename?: string;
+  mimeType?: string;
+}
+
+export interface ServiceStatus {
+  platform: Platform;
+  connected: boolean;
+  lastError?: string;
+  lastReconnect?: Date;
+  messagesSent: number;
+  messagesReceived: number;
+}
+
+export interface RateLimitInfo {
+  platform: Platform;
+  messagesInWindow: number;
+  windowStart: Date;
+  isLimited: boolean;
+}
+
+export type MessageHandler = (message: RelayMessage) => Promise<void>;
+
+export interface PlatformService {
+  platform: Platform;
+  connect(): Promise<void>;
+  disconnect(): Promise<void>;
+  sendMessage(content: string, attachments?: Attachment[]): Promise<void>;
+  onMessage(handler: MessageHandler): void;
+  getStatus(): ServiceStatus;
+}
