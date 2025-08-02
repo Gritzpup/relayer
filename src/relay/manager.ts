@@ -120,8 +120,13 @@ export class RelayManager {
         attachments = undefined;
       }
 
-      // For Twitch, don't send sticker/custom-emoji attachments (they're handled in the text)
-      if (targetPlatform === Platform.Twitch && attachments) {
+      // For Twitch, don't send any attachments from Discord/Telegram
+      // They will be represented as "(file attachment:unknown)" in the formatted text
+      if (targetPlatform === Platform.Twitch && 
+          (message.platform === Platform.Discord || message.platform === Platform.Telegram)) {
+        attachments = undefined;
+      } else if (targetPlatform === Platform.Twitch && attachments) {
+        // For other sources, don't send sticker/custom-emoji attachments (they're handled in the text)
         attachments = attachments.filter(att => att.type !== 'sticker' && att.type !== 'custom-emoji');
         if (attachments.length === 0) attachments = undefined;
       }
