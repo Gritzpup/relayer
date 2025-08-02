@@ -60,11 +60,6 @@ export class TwitchService implements PlatformService {
         logger.info(`Skipping message from wrong channel: ${channel} (expected #${config.twitch.channel})`);
         return;
       }
-      // Also check if message is from our bot username
-      if (tags.username === config.twitch.username.toLowerCase()) {
-        logger.info('Skipping message from our bot');
-        return;
-      }
       
       // Skip messages that are already relayed (have platform prefix)
       if (message.startsWith('[Discord]') || message.startsWith('[Telegram]')) {
