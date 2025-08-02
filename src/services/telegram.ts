@@ -55,7 +55,7 @@ export class TelegramService implements PlatformService {
       logger.debug(`Full Telegram message:`, JSON.stringify({
         text: msg.text,
         entities: msg.entities,
-        sticker: msg.sticker ? { emoji: msg.sticker.emoji, is_custom_emoji: msg.sticker.is_custom_emoji } : null,
+        sticker: msg.sticker ? { emoji: msg.sticker.emoji, custom_emoji_id: msg.sticker.custom_emoji_id } : null,
       }));
       
       logPlatformMessage('Telegram', 'in', msg.text || msg.caption || '[Media]', username);
@@ -202,7 +202,7 @@ export class TelegramService implements PlatformService {
               const fileLink = await this.bot.getFileLink(sticker.file_id);
               
               // Extract the emoji text from the message
-              const emojiText = msg.text.substring(entity.offset, entity.offset + entity.length);
+              // const emojiText = msg.text.substring(entity.offset, entity.offset + entity.length);
               
               attachments.push({
                 type: 'custom-emoji',

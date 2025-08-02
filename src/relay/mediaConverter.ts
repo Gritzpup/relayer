@@ -1,5 +1,4 @@
 import { Platform, Attachment } from '../types';
-import { logger } from '../utils/logger';
 
 export class MediaConverter {
   // Emoji mappings between platforms
@@ -42,7 +41,7 @@ export class MediaConverter {
   // Process attachments for cross-platform compatibility
   async processAttachments(
     attachments: Attachment[],
-    sourcePlatform: Platform,
+    _sourcePlatform: Platform,
     targetPlatform: Platform
   ): Promise<Attachment[]> {
     const processed: Attachment[] = [];

@@ -10,8 +10,14 @@ export class MessageFormatter {
       formattedContent = `${prefix}: ${formattedContent}`;
     }
 
+    // Replace URLs with "(file attachment:unknown)" when sending to Twitch from Discord/Telegram
+    if (targetPlatform === Platform.Twitch && 
+        (message.platform === Platform.Discord || message.platform === Platform.Telegram)) {
+      formattedContent = this.replaceUrlsForTwitch(formattedContent);
+    }
+
     if (message.attachments && message.attachments.length > 0) {
-      const attachmentInfo = this.formatAttachments(message.attachments, targetPlatform);
+      const attachmentInfo = this.formatAttachments(message.attachments, targetPlatform, message.platform);
       if (attachmentInfo) {
         formattedContent = formattedContent ? `${formattedContent} ${attachmentInfo}` : attachmentInfo;
       }
@@ -20,14 +26,23 @@ export class MessageFormatter {
     return this.truncateMessage(formattedContent, targetPlatform);
   }
 
-  private formatAttachments(attachments: Attachment[], targetPlatform: Platform): string {
+  private formatAttachments(attachments: Attachment[], targetPlatform: Platform, sourcePlatform: Platform): string {
     const formattedAttachments = attachments.map(att => {
       switch (att.type) {
         case 'image':
+          if (targetPlatform === Platform.Twitch && (sourcePlatform === Platform.Discord || sourcePlatform === Platform.Telegram)) {
+            return '(file attachment:unknown)';
+          }
           return targetPlatform === Platform.Twitch && att.url ? att.url : '[Image]';
         case 'video':
+          if (targetPlatform === Platform.Twitch && (sourcePlatform === Platform.Discord || sourcePlatform === Platform.Telegram)) {
+            return '(file attachment:unknown)';
+          }
           return targetPlatform === Platform.Twitch && att.url ? att.url : '[Video]';
         case 'file':
+          if (targetPlatform === Platform.Twitch && (sourcePlatform === Platform.Discord || sourcePlatform === Platform.Telegram)) {
+            return '(file attachment:unknown)';
+          }
           return `[File: ${att.filename || 'attachment'}]`;
         case 'sticker':
           // For Discord, don't add to text (will show as attachment)
@@ -39,6 +54,9 @@ export class MessageFormatter {
           }
           return '[Sticker]';
         case 'gif':
+          if (targetPlatform === Platform.Twitch && (sourcePlatform === Platform.Discord || sourcePlatform === Platform.Telegram)) {
+            return '(file attachment:unknown)';
+          }
           return targetPlatform === Platform.Twitch && att.url ? att.url : '[GIF]';
         case 'custom-emoji':
           // For Discord/Telegram, don't add to text (will show as attachment)
@@ -121,5 +139,11 @@ export class MessageFormatter {
     });
 
     return convertedContent;
+  }
+
+  private replaceUrlsForTwitch(content: string): string {
+    // Regular expression to match URLs
+    const urlRegex = /https?:\/\/[^\s]+/gi;
+    return content.replace(urlRegex, '(file attachment:unknown)');
   }
 }
