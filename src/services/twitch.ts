@@ -50,25 +50,42 @@ export class TwitchService implements PlatformService {
     });
 
     this.client.on('message', async (channel: string, tags: tmi.ChatUserstate, message: string, self: boolean) => {
-      if (self) return;
-      if (channel !== `#${config.twitch.channel}`) return;
+      logger.info(`Twitch raw message received - Channel: ${channel}, User: ${tags.username}, Self: ${self}, Message: "${message}"`);
+      
+      if (self) {
+        logger.info('Skipping self message');
+        return;
+      }
+      if (channel !== `#${config.twitch.channel}`) {
+        logger.info(`Skipping message from wrong channel: ${channel} (expected #${config.twitch.channel})`);
+        return;
+      }
       // Also check if message is from our bot username
-      if (tags.username === config.twitch.username.toLowerCase()) return;
+      if (tags.username === config.twitch.username.toLowerCase()) {
+        logger.info('Skipping message from our bot');
+        return;
+      }
       
       // Skip messages that are already relayed (have platform prefix)
-      if (message.startsWith('[Discord]') || message.startsWith('[Telegram]')) return;
+      if (message.startsWith('[Discord]') || message.startsWith('[Telegram]')) {
+        logger.info('Skipping already relayed message with platform prefix');
+        return;
+      }
 
       this.status.messagesReceived++;
       const username = tags.username || 'Unknown';
       logPlatformMessage('Twitch', 'in', message, username);
 
       if (this.messageHandler) {
+        logger.info('Calling message handler for Twitch message');
         const relayMessage = this.convertMessage(tags, message);
         try {
           await this.messageHandler(relayMessage);
         } catch (error) {
           logError(error as Error, 'Twitch message handler');
         }
+      } else {
+        logger.warn('No message handler set for Twitch');
       }
     });
 
@@ -81,6 +98,20 @@ export class TwitchService implements PlatformService {
 
     this.client.on('notice', (_channel: string, msgid: string, message: string) => {
       logger.warn(`Twitch notice [${msgid}]: ${message}`);
+    });
+
+    this.client.on('join', (channel: string, username: string, self: boolean) => {
+      if (self) {
+        logger.info(`Twitch bot successfully joined channel: ${channel}`);
+      } else {
+        logger.info(`User ${username} joined ${channel}`);
+      }
+    });
+
+    this.client.on('part', (channel: string, _username: string, self: boolean) => {
+      if (self) {
+        logger.warn(`Twitch bot left channel: ${channel}`);
+      }
     });
   }
 
