@@ -9,6 +9,7 @@ export class TwitchService implements PlatformService {
   private client: tmi.Client;
   private messageHandler?: MessageHandler;
   private reconnectManager: ReconnectManager;
+  private isConnecting: boolean = false;
   private status: ServiceStatus = {
     platform: Platform.Twitch,
     connected: false,
@@ -20,7 +21,7 @@ export class TwitchService implements PlatformService {
     this.client = new tmi.Client({
       options: { debug: false },
       connection: {
-        reconnect: true,
+        reconnect: false,  // Disable tmi.js built-in reconnection - we handle it manually
         secure: true,
       },
       identity: {
@@ -47,23 +48,24 @@ export class TwitchService implements PlatformService {
     this.client.on('connected', (addr: string, port: number) => {
       logger.info(`Twitch connected to ${addr}:${port}`);
       this.status.connected = true;
+      this.isConnecting = false;  // Reset connecting flag on successful connection
     });
 
     this.client.on('message', async (channel: string, tags: tmi.ChatUserstate, message: string, self: boolean) => {
-      logger.info(`Twitch raw message received - Channel: ${channel}, User: ${tags.username}, Self: ${self}, Message: "${message}"`);
+      logger.debug(`Twitch raw message received - Channel: ${channel}, User: ${tags.username}, Self: ${self}, Message: "${message}"`);
       
       if (self) {
-        logger.info('Skipping self message');
+        logger.debug('Skipping self message');
         return;
       }
       if (channel !== `#${config.twitch.channel}`) {
-        logger.info(`Skipping message from wrong channel: ${channel} (expected #${config.twitch.channel})`);
+        logger.debug(`Skipping message from wrong channel: ${channel} (expected #${config.twitch.channel})`);
         return;
       }
       
       // Skip messages that are already relayed (have platform prefix)
       if (message.startsWith('[Discord]') || message.startsWith('[Telegram]')) {
-        logger.info('Skipping already relayed message with platform prefix');
+        logger.debug('Skipping already relayed message with platform prefix');
         return;
       }
 
@@ -72,7 +74,7 @@ export class TwitchService implements PlatformService {
       logPlatformMessage('Twitch', 'in', message, username);
 
       if (this.messageHandler) {
-        logger.info('Calling message handler for Twitch message');
+        logger.debug('Calling message handler for Twitch message');
         const relayMessage = this.convertMessage(tags, message);
         try {
           await this.messageHandler(relayMessage);
@@ -87,8 +89,12 @@ export class TwitchService implements PlatformService {
     this.client.on('disconnected', (reason: string) => {
       logger.warn(`Twitch disconnected: ${reason}`);
       this.status.connected = false;
+      this.isConnecting = false;  // Reset connecting flag on disconnect
       this.status.lastError = reason;
-      this.reconnectManager.scheduleReconnect();
+      // Only schedule reconnect if not already handling it
+      if (reason && reason !== 'Connection closed.') {
+        this.reconnectManager.scheduleReconnect();
+      }
     });
 
     this.client.on('notice', (_channel: string, msgid: string, message: string) => {
@@ -99,7 +105,7 @@ export class TwitchService implements PlatformService {
       if (self) {
         logger.info(`Twitch bot successfully joined channel: ${channel}`);
       } else {
-        logger.info(`User ${username} joined ${channel}`);
+        logger.debug(`User ${username} joined ${channel}`);
       }
     });
 
@@ -108,10 +114,36 @@ export class TwitchService implements PlatformService {
         logger.warn(`Twitch bot left channel: ${channel}`);
       }
     });
+
+    // Note: tmi.js doesn't expose a general error event - errors are handled through disconnected event
   }
 
   private async connectInternal(): Promise<void> {
-    await this.client.connect();
+    // Prevent duplicate connection attempts
+    if (this.isConnecting || this.status.connected) {
+      logger.debug('Twitch: Already connecting or connected, skipping connection attempt');
+      return;
+    }
+    
+    this.isConnecting = true;
+    
+    try {
+      // Disconnect any existing connection first
+      if (this.client.readyState() === 'OPEN' || this.client.readyState() === 'CONNECTING') {
+        try {
+          await this.client.disconnect();
+        } catch (err) {
+          // Ignore disconnect errors during cleanup
+        }
+      }
+      
+      await this.client.connect();
+    } catch (error) {
+      this.isConnecting = false;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`Twitch connection error: ${errorMessage}`);
+      throw error;
+    }
   }
 
   async connect(): Promise<void> {
@@ -120,7 +152,17 @@ export class TwitchService implements PlatformService {
 
   async disconnect(): Promise<void> {
     this.reconnectManager.stop();
-    await this.client.disconnect();
+    this.isConnecting = false;
+    
+    try {
+      if (this.client.readyState() === 'OPEN') {
+        await this.client.disconnect();
+      }
+    } catch (error) {
+      // Log but don't throw - we're disconnecting anyway
+      logger.debug('Error during Twitch disconnect (ignored):', error);
+    }
+    
     this.status.connected = false;
     logger.info('Twitch disconnected');
   }
