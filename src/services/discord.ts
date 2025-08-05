@@ -240,12 +240,26 @@ export class DiscordService implements PlatformService {
       try {
         const referencedMessage = await message.fetchReference();
         if (referencedMessage) {
+          let author = referencedMessage.author.username;
+          let content = referencedMessage.content || '[No content]';
+          
+          // If replying to a bot message, extract the original author from the message content
+          if (referencedMessage.author.bot && content) {
+            // Pattern: [emoji] [Platform] username: message
+            // or just [Platform] username: message for Twitch
+            const authorMatch = content.match(/(?:^[^\[]*)?(?:\[[\w]+\]\s+)?([^:]+):\s*(.*)/);
+            if (authorMatch) {
+              author = authorMatch[1].trim();
+              content = authorMatch[2] || content;
+            }
+          }
+          
           replyTo = {
             messageId: referencedMessage.id,
-            author: referencedMessage.author.username,
-            content: referencedMessage.content || '[No content]',
+            author: author,
+            content: content,
           };
-          logger.debug(`Discord message ${message.id} is a reply to ${referencedMessage.id}`);
+          logger.debug(`Discord message ${message.id} is a reply to ${referencedMessage.id} (author: ${author})`);
         }
       } catch (error) {
         logger.debug(`Failed to fetch reference message: ${error}`);

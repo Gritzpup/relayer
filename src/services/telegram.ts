@@ -345,13 +345,25 @@ export class TelegramService implements PlatformService {
     let replyTo: RelayMessage['replyTo'] | undefined;
     if (msg.reply_to_message) {
       const replyMsg = msg.reply_to_message;
-      const replyAuthor = replyMsg.from?.username || replyMsg.from?.first_name || 'Unknown';
+      let replyAuthor = replyMsg.from?.username || replyMsg.from?.first_name || 'Unknown';
+      let replyContent = replyMsg.text || replyMsg.caption || '[No content]';
+      
+      // If replying to a bot message, extract the original author from the message content
+      if (replyMsg.from?.is_bot && replyContent) {
+        // Pattern: [emoji] [Platform] username: message
+        const authorMatch = replyContent.match(/(?:^[^\[]*)?(?:\[[\w]+\]\s+)?([^:]+):\s*(.*)/);
+        if (authorMatch) {
+          replyAuthor = authorMatch[1].trim();
+          replyContent = authorMatch[2] || replyContent;
+        }
+      }
+      
       replyTo = {
         messageId: replyMsg.message_id.toString(),
         author: replyAuthor,
-        content: replyMsg.text || replyMsg.caption || '[No content]',
+        content: replyContent,
       };
-      logger.debug(`Telegram message ${msg.message_id} is a reply to ${replyMsg.message_id}`);
+      logger.debug(`Telegram message ${msg.message_id} is a reply to ${replyMsg.message_id} (author: ${replyAuthor})`);
     }
     
     return {
