@@ -58,14 +58,22 @@ export class MessageFormatter {
       // For Twitch, add "replied to:" prefix since it doesn't support real replies
       formattedContent = `replied to: ${replyInfo.author} - ${formattedContent}`;
     } else if (replyInfo && targetPlatform === Platform.Discord) {
-      // For Discord, we'll handle this with message references in sendMessage
-      // But add context for clarity
+      // For Discord, only add reply context if we don't have a message reference
+      // (handled in sendMessage with reply parameter)
+      // This is for native replies that can't be properly linked
       const replyPreview = replyInfo.content.length > 50 
         ? replyInfo.content.substring(0, 50) + '...' 
         : replyInfo.content;
-      formattedContent = `> Replying to ${replyInfo.author}: ${replyPreview}\n${formattedContent}`;
+      formattedContent = `↩️ Replying to ${replyInfo.author}: "${replyPreview}"\n\n${formattedContent}`;
+    } else if (replyInfo && targetPlatform === Platform.Telegram) {
+      // For Telegram, if we don't have a message ID to reply to (native reply),
+      // add reply context to the message text
+      const replyPreview = replyInfo.content.length > 50 
+        ? replyInfo.content.substring(0, 50) + '...' 
+        : replyInfo.content;
+      formattedContent = `↩️ Replying to ${replyInfo.author}: "${replyPreview}"\n\n${formattedContent}`;
     }
-    // For Telegram, we'll use reply_to_message_id in sendMessage
+    // For Telegram with proper message ID, we'll use reply_to_message_id in sendMessage
 
     // Replace URLs with "(file attachment:unknown)" when sending to Twitch from Discord/Telegram
     if (targetPlatform === Platform.Twitch && 

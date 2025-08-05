@@ -82,8 +82,25 @@ export class RelayManager {
   }
 
   private async handleMessage(message: RelayMessage): Promise<void> {
+    // Always track the message, even if we're not relaying it
+    // This allows us to handle replies to native messages
+    if (message.replyTo) {
+      logger.debug(`Processing message ${message.id} from ${message.platform} which is a reply to ${message.replyTo.messageId}`);
+    }
+    
+    const mappingId = this.messageMapper.createMapping(
+      message.platform,
+      message.id,
+      message.content,
+      message.author,
+      message.replyTo?.messageId,
+      message.replyTo?.content,
+      message.replyTo?.author
+    );
+
+    // Check if we should relay this message
     if (!this.formatter.shouldRelayMessage(message)) {
-      logger.debug(`Skipping message from ${message.platform}: ${message.content}`);
+      logger.debug(`Not relaying message from ${message.platform}: ${message.content} (but tracking it for replies)`);
       return;
     }
 
@@ -93,18 +110,6 @@ export class RelayManager {
     }
 
     this.addToHistory(message);
-
-    // Create a message mapping for tracking across platforms
-    if (message.replyTo) {
-      logger.debug(`Processing message ${message.id} from ${message.platform} which is a reply to ${message.replyTo.messageId}`);
-    }
-    const mappingId = this.messageMapper.createMapping(
-      message.platform,
-      message.id,
-      message.content,
-      message.author,
-      message.replyTo?.messageId
-    );
 
     const targetPlatforms = this.getTargetPlatforms(message.platform);
     
@@ -214,7 +219,11 @@ export class RelayManager {
         logger.debug(`Using native reply info from ${message.platform}: replying to ${message.replyTo.author}`);
       }
 
-      const formattedContent = this.formatter.formatForPlatform(message, targetPlatform, replyInfo);
+      // Only pass reply info to formatter if we don't have a proper message ID
+      // (for Telegram and Discord, we want to use the actual reply functionality when available)
+      const hasProperReply = replyToMessageId !== undefined;
+      const formatterReplyInfo = hasProperReply ? undefined : replyInfo;
+      const formattedContent = this.formatter.formatForPlatform(message, targetPlatform, formatterReplyInfo);
       
       let attachments = message.attachments;
       if (!config.relay.attachmentsEnabled) {

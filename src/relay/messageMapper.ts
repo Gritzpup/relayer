@@ -35,7 +35,9 @@ export class MessageMapper {
     originalMessageId: string,
     content: string,
     author: string,
-    replyToMessageId?: string
+    replyToMessageId?: string,
+    replyToContent?: string,
+    replyToAuthor?: string
   ): string {
     const mappingId = this.generateMappingId();
     
@@ -55,6 +57,18 @@ export class MessageMapper {
           logger.debug(`Found reply to relayed message: ${replyToMessageId} maps to mapping ${replyToMapping}`);
         } else {
           logger.debug(`No mapping found for platform message ${originalPlatform}:${replyToMessageId}`);
+          
+          // Try to find a mapping by content match (for native messages)
+          // This helps when replying to messages that weren't relayed by the bot
+          if (replyToContent && replyToAuthor) {
+            const potentialMapping = this.findMappingByContent(replyToContent, replyToAuthor, originalPlatform);
+            if (potentialMapping) {
+              replyToMapping = potentialMapping;
+              logger.debug(`Found potential mapping by content match: ${potentialMapping}`);
+              // Add this platform message to the mapping so future replies work
+              this.addPlatformMessage(potentialMapping, originalPlatform, replyToMessageId);
+            }
+          }
         }
       }
       
@@ -195,6 +209,38 @@ export class MessageMapper {
   } | undefined {
     const mapping = this.getMappingByPlatformMessage(platform, messageId);
     return mapping?.platformMessages;
+  }
+
+  /**
+   * Find a mapping by matching content and author
+   * Used to find potential matches for native messages
+   */
+  findMappingByContent(content: string, author: string, platform: Platform, timeWindow: number = 300000): string | undefined {
+    const now = Date.now();
+    
+    for (const [mappingId, mapping] of this.mappings.entries()) {
+      // Skip if this mapping is from the same platform
+      if (mapping.originalPlatform === platform) continue;
+      
+      // Check if within time window (default 5 minutes)
+      const timeDiff = Math.abs(mapping.timestamp.getTime() - now);
+      if (timeDiff > timeWindow) continue;
+      
+      // Check if content matches (case insensitive, trimmed)
+      const contentMatches = mapping.content.trim().toLowerCase() === content.trim().toLowerCase();
+      
+      // For author matching, be more flexible (remove platform prefixes, case insensitive)
+      const cleanAuthor = author.replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
+      const cleanMappingAuthor = mapping.author.replace(/^\[.*?\]\s*/, '').trim().toLowerCase();
+      const authorMatches = cleanMappingAuthor === cleanAuthor;
+      
+      if (contentMatches && authorMatches) {
+        logger.debug(`Found potential mapping match: ${mappingId} for content "${content}" by ${author}`);
+        return mappingId;
+      }
+    }
+    
+    return undefined;
   }
 
   private generateMappingId(): string {
