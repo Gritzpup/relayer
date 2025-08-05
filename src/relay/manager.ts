@@ -192,6 +192,7 @@ export class RelayManager {
       let replyToMessageId: string | undefined;
       let replyInfo: { author: string; content: string } | undefined;
       
+      // First check if we can find the reply in our messageMapper (for cross-platform replies)
       if (mappingId) {
         logger.debug(`Checking for reply info for mapping ${mappingId} on ${targetPlatform}`);
         const replyData = this.messageMapper.getReplyToInfo(mappingId, targetPlatform);
@@ -202,6 +203,12 @@ export class RelayManager {
         } else {
           logger.debug(`No reply data found for mapping ${mappingId} on ${targetPlatform}`);
         }
+      }
+      
+      // If no cross-platform reply found but message has native reply info, use that
+      if (!replyInfo && message.replyTo) {
+        replyInfo = { author: message.replyTo.author, content: message.replyTo.content };
+        logger.debug(`Using native reply info from ${message.platform}: replying to ${message.replyTo.author}`);
       }
 
       const formattedContent = this.formatter.formatForPlatform(message, targetPlatform, replyInfo);
