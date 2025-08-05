@@ -12,6 +12,13 @@ export interface RelayMessage {
   timestamp: Date;
   attachments?: Attachment[];
   raw?: any;
+  replyTo?: {
+    messageId: string;
+    author: string;
+    content: string;
+  };
+  isEdit?: boolean;
+  originalMessageId?: string;
 }
 
 export interface Attachment {
@@ -44,7 +51,7 @@ export interface PlatformService {
   platform: Platform;
   connect(): Promise<void>;
   disconnect(): Promise<void>;
-  sendMessage(content: string, attachments?: Attachment[]): Promise<void>;
+  sendMessage(content: string, attachments?: Attachment[]): Promise<string | undefined>;
   onMessage(handler: MessageHandler): void;
   getStatus(): ServiceStatus;
 }

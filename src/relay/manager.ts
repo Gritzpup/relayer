@@ -3,6 +3,7 @@ import { DiscordService } from '../services/discord';
 import { TelegramService } from '../services/telegram';
 import { TwitchService } from '../services/twitch';
 import { MessageFormatter } from './formatter';
+import { MessageMapper } from './messageMapper';
 import { RateLimiter } from './rateLimit';
 import { config } from '../config';
 import { logger, logError } from '../utils/logger';
@@ -10,12 +11,14 @@ import { logger, logError } from '../utils/logger';
 export class RelayManager {
   private services: Map<Platform, PlatformService> = new Map();
   private formatter: MessageFormatter;
+  private messageMapper: MessageMapper;
   private rateLimiter: RateLimiter;
   private messageHistory: string[] = [];
   private isRunning: boolean = false;
 
   constructor() {
     this.formatter = new MessageFormatter();
+    this.messageMapper = new MessageMapper();
     this.rateLimiter = new RateLimiter();
     
     this.services.set(Platform.Discord, new DiscordService());
@@ -87,14 +90,23 @@ export class RelayManager {
 
     this.addToHistory(message);
 
+    // Create a message mapping for tracking across platforms
+    const mappingId = this.messageMapper.createMapping(
+      message.platform,
+      message.id,
+      message.content,
+      message.author,
+      message.replyTo?.messageId
+    );
+
     const targetPlatforms = this.getTargetPlatforms(message.platform);
     
     for (const targetPlatform of targetPlatforms) {
-      await this.relayToPlatform(message, targetPlatform);
+      await this.relayToPlatform(message, targetPlatform, mappingId);
     }
   }
 
-  private async relayToPlatform(message: RelayMessage, targetPlatform: Platform): Promise<void> {
+  private async relayToPlatform(message: RelayMessage, targetPlatform: Platform, mappingId: string): Promise<void> {
     const service = this.services.get(targetPlatform);
     if (!service) {
       logger.error(`Service not found for platform: ${targetPlatform}`);
@@ -131,8 +143,14 @@ export class RelayManager {
         if (attachments.length === 0) attachments = undefined;
       }
 
-      await service.sendMessage(formattedContent, attachments);
+      const sentMessageId = await service.sendMessage(formattedContent, attachments);
       this.rateLimiter.recordMessage(targetPlatform, formattedContent, attachments);
+      
+      // Track the sent message ID in our mapping
+      if (sentMessageId) {
+        this.messageMapper.addPlatformMessage(mappingId, targetPlatform, sentMessageId);
+        logger.debug(`Tracked message ${sentMessageId} on ${targetPlatform} for mapping ${mappingId}`);
+      }
       
     } catch (error) {
       logError(error as Error, `Failed to relay message to ${targetPlatform}`);
@@ -160,12 +178,14 @@ export class RelayManager {
   getStatus(): any {
     const servicesStatus = Array.from(this.services.values()).map(service => service.getStatus());
     const rateLimitStatus = this.rateLimiter.getAllStatuses();
+    const messageMapperStats = this.messageMapper.getStats();
 
     return {
       isRunning: this.isRunning,
       services: servicesStatus,
       rateLimit: rateLimitStatus,
       messageHistory: this.messageHistory.length,
+      messageMapper: messageMapperStats,
     };
   }
 

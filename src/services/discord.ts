@@ -108,7 +108,7 @@ export class DiscordService implements PlatformService {
     this.channel = channel as TextChannel;
   }
 
-  async sendMessage(content: string, attachments?: Attachment[]): Promise<void> {
+  async sendMessage(content: string, attachments?: Attachment[]): Promise<string | undefined> {
     if (!this.channel) {
       throw new Error('Discord channel not initialized');
     }
@@ -145,9 +145,11 @@ export class DiscordService implements PlatformService {
       }
     }
 
-    await this.channel.send(messageOptions);
+    const sentMessage = await this.channel.send(messageOptions);
     this.status.messagesSent++;
     logPlatformMessage('Discord', 'out', content);
+    
+    return sentMessage.id;
   }
 
   onMessage(handler: MessageHandler): void {

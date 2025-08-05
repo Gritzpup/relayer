@@ -167,7 +167,7 @@ export class TwitchService implements PlatformService {
     logger.info('Twitch disconnected');
   }
 
-  async sendMessage(content: string, attachments?: Attachment[]): Promise<void> {
+  async sendMessage(content: string, attachments?: Attachment[]): Promise<string | undefined> {
     const channel = `#${config.twitch.channel}`;
     
     let messageContent = content;
@@ -187,6 +187,9 @@ export class TwitchService implements PlatformService {
     await this.client.say(channel, messageContent);
     this.status.messagesSent++;
     logPlatformMessage('Twitch', 'out', messageContent);
+    
+    // Twitch doesn't provide message IDs
+    return undefined;
   }
 
   onMessage(handler: MessageHandler): void {

@@ -108,8 +108,9 @@ export class TelegramService implements PlatformService {
     logger.info('Telegram disconnected');
   }
 
-  async sendMessage(content: string, attachments?: Attachment[]): Promise<void> {
+  async sendMessage(content: string, attachments?: Attachment[]): Promise<string | undefined> {
     const chatId = config.telegram.groupId;
+    let messageId: string | undefined;
 
     try {
       if (attachments && attachments.length > 0) {
@@ -126,36 +127,42 @@ export class TelegramService implements PlatformService {
               media: emoji.url!,
               caption: index === 0 ? content : undefined,
             }));
-            await this.bot.sendMediaGroup(chatId, media);
+            const messages = await this.bot.sendMediaGroup(chatId, media);
+            messageId = messages[0].message_id.toString();
           } else {
             // Single custom emoji - send as small photo
-            await this.bot.sendPhoto(chatId, customEmojis[0].url!, { 
+            const msg = await this.bot.sendPhoto(chatId, customEmojis[0].url!, { 
               caption: content,
               disable_notification: true, // Less intrusive for emojis
             });
+            messageId = msg.message_id.toString();
           }
         }
         
         // Handle other attachments normally
         for (const attachment of otherAttachments) {
+          let msg: TelegramBot.Message;
           if (attachment.type === 'image' || attachment.type === 'gif') {
             if (attachment.url) {
-              await this.bot.sendPhoto(chatId, attachment.url, { caption: content });
+              msg = await this.bot.sendPhoto(chatId, attachment.url, { caption: content });
             } else if (attachment.data) {
-              await this.bot.sendPhoto(chatId, attachment.data, { caption: content });
+              msg = await this.bot.sendPhoto(chatId, attachment.data, { caption: content });
             }
           } else if (attachment.type === 'video') {
             if (attachment.url) {
-              await this.bot.sendVideo(chatId, attachment.url, { caption: content });
+              msg = await this.bot.sendVideo(chatId, attachment.url, { caption: content });
             } else if (attachment.data) {
-              await this.bot.sendVideo(chatId, attachment.data, { caption: content });
+              msg = await this.bot.sendVideo(chatId, attachment.data, { caption: content });
             }
           } else {
             if (attachment.url) {
-              await this.bot.sendDocument(chatId, attachment.url, { caption: content });
+              msg = await this.bot.sendDocument(chatId, attachment.url, { caption: content });
             } else if (attachment.data) {
-              await this.bot.sendDocument(chatId, attachment.data, { caption: content });
+              msg = await this.bot.sendDocument(chatId, attachment.data, { caption: content });
             }
+          }
+          if (msg! && !messageId) {
+            messageId = msg!.message_id.toString();
           }
         }
         
@@ -164,14 +171,18 @@ export class TelegramService implements PlatformService {
           // Content was already sent with the emoji
         } else if (otherAttachments.length === 0 && content && customEmojis.length === 0) {
           // No attachments, just send text
-          await this.bot.sendMessage(chatId, content);
+          const msg = await this.bot.sendMessage(chatId, content);
+          messageId = msg.message_id.toString();
         }
       } else {
-        await this.bot.sendMessage(chatId, content);
+        const msg = await this.bot.sendMessage(chatId, content);
+        messageId = msg.message_id.toString();
       }
       
       this.status.messagesSent++;
       logPlatformMessage('Telegram', 'out', content);
+      
+      return messageId;
     } catch (error) {
       logError(error as Error, 'Telegram send message');
       throw error;
