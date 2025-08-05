@@ -95,7 +95,8 @@ export class TwitchService implements PlatformService {
     });
 
     this.client.on('message', async (channel: string, tags: tmi.ChatUserstate, message: string, self: boolean) => {
-      logger.debug(`Twitch raw message received - Channel: ${channel}, User: ${tags.username}, Self: ${self}, Message: "${message}"`);
+      logger.info(`TWITCH MSG: Channel: ${channel}, User: ${tags.username}, Self: ${self}, Message: "${message.substring(0, 50)}..."`);
+      logger.info(`TWITCH MSG: Current stored messages: ${this.recentMessages.size}`);
       
       if (self) {
         logger.debug('Skipping self message');
@@ -119,21 +120,26 @@ export class TwitchService implements PlatformService {
       const relayPattern = /^(?:.*?)?\[(Discord|Telegram)\]\s+([^:]+):\s*(.*)$/;
       const relayMatch = message.match(relayPattern);
       
+      logger.info(`RELAY CHECK: Testing message: "${message}"`);
+      logger.info(`RELAY CHECK: Match result: ${relayMatch ? 'YES' : 'NO'}`);
+      
       if (relayMatch) {
-        logger.debug('Processing relayed message for reply tracking');
+        logger.info(`RELAY CHECK: Platform=${relayMatch[1]}, Author=${relayMatch[2]}, Content=${relayMatch[3]}`);
         const platform = relayMatch[1];
         const originalAuthor = relayMatch[2].trim();
         const originalContent = relayMatch[3];
         const timestamp = new Date();
         
         // Store with the original author's name for reply detection
+        const messageId = `${platform}-${Date.now()}`;
         this.storeRecentMessage(
-          `${platform}-${Date.now()}`, // Synthetic ID
+          messageId,
           originalAuthor,
           originalContent,
           timestamp
         );
-        logger.debug(`Stored relayed message from ${originalAuthor} for reply tracking`);
+        logger.info(`RELAY TRACKING: Stored message from ${originalAuthor} with content: "${originalContent.substring(0, 30)}..."`);
+        logger.info(`RELAY TRACKING: Recent messages now has ${this.recentMessages.size} entries`);
         return; // Skip relaying it back
       }
 
@@ -303,6 +309,8 @@ export class TwitchService implements PlatformService {
     const author = tags.username || 'Unknown';
     const timestamp = new Date(parseInt(tags['tmi-sent-ts'] || Date.now().toString()));
     
+    logger.info(`CONVERT MSG: Processing message from ${author}: "${message.substring(0, 30)}..."`);
+    
     // Store this message in recent messages for future reply detection
     this.storeRecentMessage(id, author, message, timestamp);
     
@@ -315,8 +323,14 @@ export class TwitchService implements PlatformService {
       const mentionedUser = mentionMatch[1].toLowerCase();
       actualContent = mentionMatch[2] || message;
       
-      logger.debug(`Reply detection: Looking for messages from @${mentionedUser}`);
-      logger.debug(`Current recent messages: ${Array.from(this.recentMessages.keys()).join(', ')}`);
+      logger.info(`REPLY DETECTION: Looking for messages from @${mentionedUser}`);
+      logger.info(`REPLY DETECTION: Current message keys: [${Array.from(this.recentMessages.keys()).join(', ')}]`);
+      logger.info(`REPLY DETECTION: Total messages stored: ${this.recentMessages.size}`);
+      
+      // Debug: Show all stored messages
+      for (const [key, msg] of this.recentMessages.entries()) {
+        logger.info(`  - Key: "${key}", Author: "${msg.author}", Content: "${msg.content.substring(0, 30)}..."`);
+      }
       
       // Look for recent message from mentioned user
       let recentMessage = this.recentMessages.get(mentionedUser);
@@ -369,15 +383,21 @@ export class TwitchService implements PlatformService {
   
   private storeRecentMessage(id: string, author: string, content: string, timestamp: Date): void {
     const authorKey = author.toLowerCase();
+    logger.info(`STORE MESSAGE: Storing with key="${authorKey}" author="${author}" content="${content.substring(0, 50)}..."`);
     this.recentMessages.set(authorKey, { id, author, content, timestamp });
-    logger.debug(`Stored message from ${author} (key: ${authorKey}) - "${content.substring(0, 50)}..."`);
+    logger.info(`STORE MESSAGE: Map size after store: ${this.recentMessages.size}`);
     
     // Clean up old messages (older than 10 minutes)
     const cutoffTime = timestamp.getTime() - 10 * 60 * 1000;
+    let deletedCount = 0;
     for (const [key, msg] of this.recentMessages.entries()) {
       if (msg.timestamp.getTime() < cutoffTime) {
         this.recentMessages.delete(key);
+        deletedCount++;
       }
+    }
+    if (deletedCount > 0) {
+      logger.info(`STORE MESSAGE: Cleaned up ${deletedCount} old messages`);
     }
   }
 }
