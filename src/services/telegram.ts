@@ -70,6 +70,29 @@ export class TelegramService implements PlatformService {
       }
     });
 
+    this.bot.on('edited_message', async (msg: TelegramBot.Message) => {
+      if (!msg.from || msg.from.is_bot) return;
+      if (msg.chat.id.toString() !== config.telegram.groupId) return;
+      
+      const username = msg.from.username || msg.from.first_name || 'Unknown';
+      const content = msg.text || msg.caption || '[Media]';
+      
+      logger.info(`Telegram message edited: ${msg.message_id} - New: "${content}"`);
+      logPlatformMessage('Telegram', 'in', `(edited) ${content}`, username);
+      
+      if (this.messageHandler) {
+        const relayMessage = await this.convertMessage(msg);
+        relayMessage.isEdit = true;
+        relayMessage.originalMessageId = msg.message_id.toString();
+        
+        try {
+          await this.messageHandler(relayMessage);
+        } catch (error) {
+          logError(error as Error, 'Telegram edit handler');
+        }
+      }
+    });
+
     this.bot.on('polling_error', (error: Error) => {
       logError(error, 'Telegram polling error');
       this.status.lastError = error.message;
@@ -116,6 +139,9 @@ export class TelegramService implements PlatformService {
     const messageOptions: any = {};
     if (replyToMessageId) {
       messageOptions.reply_to_message_id = parseInt(replyToMessageId);
+      logger.debug(`Telegram sendMessage: Setting reply_to_message_id to ${replyToMessageId}`);
+    } else {
+      logger.debug(`Telegram sendMessage: No replyToMessageId provided`);
     }
 
     try {
@@ -133,7 +159,7 @@ export class TelegramService implements PlatformService {
               media: emoji.url!,
               caption: index === 0 ? content : undefined,
             }));
-            const messages = await this.bot.sendMediaGroup(chatId, media);
+            const messages = await this.bot.sendMediaGroup(chatId, media, messageOptions);
             messageId = messages[0].message_id.toString();
           } else {
             // Single custom emoji - send as small photo
@@ -193,6 +219,22 @@ export class TelegramService implements PlatformService {
     } catch (error) {
       logError(error as Error, 'Telegram send message');
       throw error;
+    }
+  }
+
+  async editMessage(messageId: string, newContent: string): Promise<boolean> {
+    const chatId = config.telegram.groupId;
+
+    try {
+      await this.bot.editMessageText(newContent, {
+        chat_id: chatId,
+        message_id: parseInt(messageId),
+      });
+      logger.info(`Telegram message ${messageId} edited successfully`);
+      return true;
+    } catch (error) {
+      logger.error(`Failed to edit Telegram message ${messageId}: ${error}`);
+      return false;
     }
   }
 

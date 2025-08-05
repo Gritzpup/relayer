@@ -52,6 +52,7 @@ export interface PlatformService {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   sendMessage(content: string, attachments?: Attachment[], replyToMessageId?: string): Promise<string | undefined>;
+  editMessage(messageId: string, newContent: string): Promise<boolean>;
   onMessage(handler: MessageHandler): void;
   getStatus(): ServiceStatus;
 }

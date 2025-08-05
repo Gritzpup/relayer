@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, TextChannel, Message, AttachmentBuilder, EmbedBuilder } from 'discord.js';
+import { Client, GatewayIntentBits, TextChannel, Message, PartialMessage, AttachmentBuilder, EmbedBuilder, Partials } from 'discord.js';
 import { config } from '../config';
 import { Platform, RelayMessage, MessageHandler, PlatformService, ServiceStatus, Attachment } from '../types';
 import { logger, logPlatformMessage, logError } from '../utils/logger';
@@ -24,6 +24,7 @@ export class DiscordService implements PlatformService {
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
       ],
+      partials: [Partials.Message, Partials.Channel],
     });
 
     this.reconnectManager = new ReconnectManager(
@@ -82,6 +83,33 @@ export class DiscordService implements PlatformService {
       logger.warn('Discord disconnected');
       this.status.connected = false;
       this.reconnectManager.scheduleReconnect();
+    });
+
+    this.client.on('messageUpdate', async (oldMessage: Message | PartialMessage, newMessage: Message | PartialMessage) => {
+      // Fetch full messages if they're partial
+      if (oldMessage.partial) oldMessage = await oldMessage.fetch();
+      if (newMessage.partial) newMessage = await newMessage.fetch();
+      
+      // Skip if not in our channel or from a bot
+      if (newMessage.author?.bot) return;
+      if (newMessage.channel.id !== config.discord.channelId) return;
+      
+      // Skip if content hasn't changed (could be embed update, etc.)
+      if (oldMessage.content === newMessage.content) return;
+      
+      logger.info(`Discord message edited: ${oldMessage.id} - Old: "${oldMessage.content}" New: "${newMessage.content}"`);
+      
+      if (this.messageHandler && newMessage instanceof Message) {
+        const relayMessage = await this.convertMessage(newMessage);
+        relayMessage.isEdit = true;
+        relayMessage.originalMessageId = newMessage.id;
+        
+        try {
+          await this.messageHandler(relayMessage);
+        } catch (error) {
+          logError(error as Error, 'Discord edit handler');
+        }
+      }
     });
   }
 
@@ -158,6 +186,23 @@ export class DiscordService implements PlatformService {
     logPlatformMessage('Discord', 'out', content);
     
     return sentMessage.id;
+  }
+
+  async editMessage(messageId: string, newContent: string): Promise<boolean> {
+    if (!this.channel) {
+      logger.error('Discord channel not initialized for edit');
+      return false;
+    }
+
+    try {
+      const message = await this.channel.messages.fetch(messageId);
+      await message.edit(newContent);
+      logger.info(`Discord message ${messageId} edited successfully`);
+      return true;
+    } catch (error) {
+      logger.error(`Failed to edit Discord message ${messageId}: ${error}`);
+      return false;
+    }
   }
 
   onMessage(handler: MessageHandler): void {

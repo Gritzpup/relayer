@@ -195,6 +195,13 @@ export class TwitchService implements PlatformService {
     return undefined;
   }
 
+  async editMessage(_messageId: string, _newContent: string): Promise<boolean> {
+    // Twitch doesn't support message editing
+    // We could send a new message with "(edited)" prefix, but that would create noise
+    logger.debug('Twitch doesn\'t support message editing');
+    return false;
+  }
+
   onMessage(handler: MessageHandler): void {
     this.messageHandler = handler;
   }

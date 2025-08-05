@@ -72,7 +72,11 @@ export class RelayManager {
   private setupMessageHandlers(): void {
     this.services.forEach(service => {
       service.onMessage(async (message: RelayMessage) => {
-        await this.handleMessage(message);
+        if (message.isEdit) {
+          await this.handleEdit(message);
+        } else {
+          await this.handleMessage(message);
+        }
       });
     });
   }
@@ -106,6 +110,65 @@ export class RelayManager {
     }
   }
 
+  private async handleEdit(message: RelayMessage): Promise<void> {
+    if (!message.originalMessageId) {
+      logger.error('Edit event received without originalMessageId');
+      return;
+    }
+
+    logger.info(`Handling edit for message ${message.originalMessageId} from ${message.platform}`);
+
+    // Find the mapping for the original message
+    const mapping = this.messageMapper.getMappingByPlatformMessage(message.platform, message.originalMessageId);
+    if (!mapping) {
+      logger.warn(`No mapping found for edited message ${message.originalMessageId} from ${message.platform}`);
+      return;
+    }
+
+    // Update the content in the mapping
+    this.messageMapper.updateMessageContent(message.platform, message.originalMessageId, message.content);
+
+    // Get all platform messages for this mapping
+    const platformMessages = mapping.platformMessages;
+    
+    // Relay the edit to all other platforms
+    for (const [platform, messageId] of Object.entries(platformMessages)) {
+      const targetPlatform = platform as Platform;
+      if (targetPlatform === message.platform || !messageId) continue; // Skip the source platform
+      
+      const service = this.services.get(targetPlatform);
+      if (!service) continue;
+      
+      const status = service.getStatus();
+      if (!status.connected) {
+        logger.warn(`Cannot relay edit to ${targetPlatform}: Not connected`);
+        continue;
+      }
+
+      try {
+        // Format the edited content for the target platform
+        const formattedContent = this.formatter.formatForPlatform(message, targetPlatform);
+        
+        if (targetPlatform === Platform.Twitch) {
+          // Twitch doesn't support edits, send a new message with "(edited)" indicator
+          const editedContent = `(edited) ${formattedContent}`;
+          await service.sendMessage(editedContent);
+          logger.info(`Sent edit as new message to Twitch`);
+        } else {
+          // Discord and Telegram support native edits
+          const success = await service.editMessage(messageId, formattedContent);
+          if (success) {
+            logger.info(`Successfully edited message ${messageId} on ${targetPlatform}`);
+          } else {
+            logger.warn(`Failed to edit message ${messageId} on ${targetPlatform}`);
+          }
+        }
+      } catch (error) {
+        logError(error as Error, `Failed to relay edit to ${targetPlatform}`);
+      }
+    }
+  }
+
   private async relayToPlatform(message: RelayMessage, targetPlatform: Platform, mappingId: string): Promise<void> {
     const service = this.services.get(targetPlatform);
     if (!service) {
@@ -130,11 +193,14 @@ export class RelayManager {
       let replyInfo: { author: string; content: string } | undefined;
       
       if (mappingId) {
+        logger.debug(`Checking for reply info for mapping ${mappingId} on ${targetPlatform}`);
         const replyData = this.messageMapper.getReplyToInfo(mappingId, targetPlatform);
         if (replyData) {
           replyToMessageId = replyData.messageId;
           replyInfo = { author: replyData.author, content: replyData.content };
           logger.debug(`Message is a reply, found target message ${replyToMessageId} on ${targetPlatform}`);
+        } else {
+          logger.debug(`No reply data found for mapping ${mappingId} on ${targetPlatform}`);
         }
       }
 

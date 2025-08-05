@@ -42,8 +42,29 @@ export class MessageMapper {
     // Find reply mapping if this is a reply
     let replyToMapping: string | undefined;
     if (replyToMessageId) {
+      // First check if the message being replied to exists in our mappings
       const key = `${originalPlatform}:${replyToMessageId}`;
       replyToMapping = this.messageIdToMappingId.get(key);
+      
+      if (!replyToMapping) {
+        // The message being replied to might be a relayed message from another platform
+        // Check if we have a mapping for this message ID
+        const replyToMappingData = this.getMappingByPlatformMessage(originalPlatform, replyToMessageId);
+        if (replyToMappingData) {
+          // Find the mapping ID for this mapping
+          for (const [mapId, mapping] of this.mappings.entries()) {
+            if (mapping === replyToMappingData) {
+              replyToMapping = mapId;
+              break;
+            }
+          }
+          logger.debug(`Found reply to relayed message: ${replyToMessageId} maps to ${replyToMapping}`);
+        }
+      }
+      
+      if (!replyToMapping) {
+        logger.debug(`No mapping found for reply-to message ${replyToMessageId} on ${originalPlatform}`);
+      }
     }
     
     const mapping: MessageMapping = {
@@ -64,7 +85,7 @@ export class MessageMapper {
     // Enforce cache size limit
     this.enforceMaxCacheSize();
     
-    logger.debug(`Created message mapping ${mappingId} for ${originalPlatform} message ${originalMessageId}`);
+    logger.debug(`Created message mapping ${mappingId} for ${originalPlatform} message ${originalMessageId}${replyToMapping ? ` (reply to ${replyToMapping})` : ''}`);
     
     return mappingId;
   }
@@ -115,20 +136,30 @@ export class MessageMapper {
     content: string;
   } | undefined {
     const mapping = this.mappings.get(mappingId);
-    if (!mapping || !mapping.replyToMapping) {
+    if (!mapping) {
+      logger.debug(`getReplyToInfo: No mapping found for ${mappingId}`);
+      return undefined;
+    }
+    
+    if (!mapping.replyToMapping) {
+      logger.debug(`getReplyToInfo: Mapping ${mappingId} is not a reply`);
       return undefined;
     }
 
     const replyToMapping = this.mappings.get(mapping.replyToMapping);
     if (!replyToMapping) {
+      logger.debug(`getReplyToInfo: Reply-to mapping ${mapping.replyToMapping} not found`);
       return undefined;
     }
 
     const targetMessageId = replyToMapping.platformMessages[targetPlatform];
     if (!targetMessageId) {
+      logger.debug(`getReplyToInfo: No ${targetPlatform} message ID in reply-to mapping`);
       return undefined;
     }
 
+    logger.debug(`getReplyToInfo: Found reply info for ${targetPlatform}: messageId=${targetMessageId}, author=${replyToMapping.author}`);
+    
     return {
       messageId: targetMessageId,
       author: replyToMapping.author,
