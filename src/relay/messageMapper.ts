@@ -60,7 +60,9 @@ export class MessageMapper {
         if (sourcePlatform && replyToAuthor) {
           replyToMapping = this.findMappingIdByAuthorAndPlatform(replyToAuthor, sourcePlatform);
           if (replyToMapping) {
-            logger.debug(`Found Twitch cross-platform reply mapping: ${replyToMapping} for ${replyToAuthor} from ${sourcePlatform}`);
+            logger.info(`TWITCH REPLY: Found cross-platform reply mapping: ${replyToMapping} for ${replyToAuthor} from ${sourcePlatform}`);
+          } else {
+            logger.info(`TWITCH REPLY: No mapping found for ${replyToAuthor} from ${sourcePlatform}`);
           }
         }
       } else {

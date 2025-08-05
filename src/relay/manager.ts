@@ -207,7 +207,7 @@ export class RelayManager {
       // Always populate reply info if message has reply data
       if (message.replyTo) {
         replyInfo = { author: message.replyTo.author, content: message.replyTo.content };
-        logger.debug(`Message has reply info from ${message.platform}: replying to ${message.replyTo.author}`);
+        logger.info(`REPLY INFO: Message from ${message.platform} has reply to ${message.replyTo.author}: "${message.replyTo.content?.substring(0, 30)}..."`);
       }
       
       // Then check if we can find the proper message ID in our messageMapper (for cross-platform replies)
@@ -251,6 +251,11 @@ export class RelayManager {
                                      (replyInfo && !replyToMessageId) || 
                                      (message.platform === Platform.Twitch && message.replyTo);
       const formatterReplyInfo = shouldShowReplyContext ? replyInfo : undefined;
+      
+      if (message.platform === Platform.Twitch) {
+        logger.info(`TWITCH RELAY: shouldShowReplyContext=${shouldShowReplyContext}, hasReplyTo=${!!message.replyTo}, replyInfo=${JSON.stringify(replyInfo)}, formatterReplyInfo=${JSON.stringify(formatterReplyInfo)}`);
+      }
+      
       const formattedContent = this.formatter.formatForPlatform(message, targetPlatform, formatterReplyInfo);
       
       let attachments = message.attachments;
