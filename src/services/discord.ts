@@ -146,10 +146,13 @@ export class DiscordService implements PlatformService {
 
     // Add reply reference if provided
     if (replyToMessageId) {
+      logger.info(`DISCORD: Setting reply to message ${replyToMessageId}`);
       messageOptions.reply = { 
         messageReference: replyToMessageId,
         failIfNotExists: false  // Don't fail if the message was deleted
       };
+    } else {
+      logger.info(`DISCORD: No replyToMessageId provided`);
     }
 
     if (attachments && attachments.length > 0) {

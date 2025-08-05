@@ -65,40 +65,45 @@ export class MessageMapper {
         }
       } else {
         // Standard reply handling for Discord and Telegram
-        const key = `${originalPlatform}:${replyToMessageId}`;
-        replyToMapping = this.messageIdToMappingId.get(key);
         
-        if (!replyToMapping) {
-          logger.info(`REPLY CREATE: Looking for mapping of reply-to message ${replyToMessageId} on ${originalPlatform}`);
-          // The message being replied to might be a relayed message from another platform
-          // Check if we have a mapping ID for this message as a platform message
-          replyToMapping = this.getMappingIdByPlatformMessage(originalPlatform, replyToMessageId);
-          if (replyToMapping) {
-            logger.info(`REPLY CREATE: Found reply to relayed message: ${replyToMessageId} maps to mapping ${replyToMapping}`);
+        // First check if this is a reply to a bot message (has platform info extracted)
+        if (replyToAuthor && replyToPlatform) {
+          logger.info(`REPLY CREATE: Detected reply to bot message - looking for ${replyToAuthor} from ${replyToPlatform}`);
+          const potentialMapping = this.findMappingIdByAuthorAndPlatform(replyToAuthor, replyToPlatform);
+          if (potentialMapping) {
+            // Special handling: We found the original message mapping
+            // Add the bot's message ID to this mapping so future lookups work
+            this.addPlatformMessage(potentialMapping, originalPlatform, replyToMessageId);
+            replyToMapping = potentialMapping;
+            logger.info(`REPLY CREATE: Found mapping by author and platform: ${potentialMapping} for ${replyToAuthor} from ${replyToPlatform}`);
+            logger.info(`REPLY CREATE: Added bot message ${replyToMessageId} to mapping for future lookups`);
           } else {
-            logger.info(`REPLY CREATE: No mapping found for platform message ${originalPlatform}:${replyToMessageId}`);
-            
-            // Try to find a mapping by author and platform (for replies to bot messages)
-            if (replyToAuthor && replyToPlatform) {
-              const potentialMapping = this.findMappingIdByAuthorAndPlatform(replyToAuthor, replyToPlatform);
-              if (potentialMapping) {
-                // Special handling: We found the original message mapping
-                // Add the bot's message ID to this mapping so future lookups work
-                this.addPlatformMessage(potentialMapping, originalPlatform, replyToMessageId);
-                replyToMapping = potentialMapping;
-                logger.info(`REPLY CREATE: Found mapping by author and platform: ${potentialMapping} for ${replyToAuthor} from ${replyToPlatform}`);
-                logger.info(`REPLY CREATE: Added bot message ${replyToMessageId} to mapping for future lookups`);
-              }
-            }
-            
-            // If still not found, try to find a mapping by content match (for native messages)
-            if (!replyToMapping && replyToContent && replyToAuthor) {
-              const potentialMapping = this.findMappingByContent(replyToContent, replyToAuthor, originalPlatform);
-              if (potentialMapping) {
-                replyToMapping = potentialMapping;
-                logger.debug(`Found potential mapping by content match: ${potentialMapping}`);
-                // Add this platform message to the mapping so future replies work
-                this.addPlatformMessage(potentialMapping, originalPlatform, replyToMessageId);
+            logger.info(`REPLY CREATE: No mapping found for ${replyToAuthor} from ${replyToPlatform}`);
+          }
+        } else {
+          // Not a reply to a bot message - do standard lookup
+          const key = `${originalPlatform}:${replyToMessageId}`;
+          replyToMapping = this.messageIdToMappingId.get(key);
+          
+          if (!replyToMapping) {
+            logger.info(`REPLY CREATE: Looking for mapping of reply-to message ${replyToMessageId} on ${originalPlatform}`);
+            // The message being replied to might be a relayed message from another platform
+            // Check if we have a mapping ID for this message as a platform message
+            replyToMapping = this.getMappingIdByPlatformMessage(originalPlatform, replyToMessageId);
+            if (replyToMapping) {
+              logger.info(`REPLY CREATE: Found reply to relayed message: ${replyToMessageId} maps to mapping ${replyToMapping}`);
+            } else {
+              logger.info(`REPLY CREATE: No mapping found for platform message ${originalPlatform}:${replyToMessageId}`);
+              
+              // If still not found, try to find a mapping by content match (for native messages)
+              if (replyToContent && replyToAuthor) {
+                const potentialMapping = this.findMappingByContent(replyToContent, replyToAuthor, originalPlatform);
+                if (potentialMapping) {
+                  replyToMapping = potentialMapping;
+                  logger.debug(`Found potential mapping by content match: ${potentialMapping}`);
+                  // Add this platform message to the mapping so future replies work
+                  this.addPlatformMessage(potentialMapping, originalPlatform, replyToMessageId);
+                }
               }
             }
           }

@@ -213,6 +213,7 @@ export class RelayManager {
       // Then check if we can find the proper message ID in our messageMapper (for cross-platform replies)
       if (mappingId && message.replyTo) {
         logger.info(`REPLY LOOKUP: Checking for reply info for mapping ${mappingId} on ${targetPlatform}`);
+        logger.info(`REPLY LOOKUP: Message replyTo data: ${JSON.stringify(message.replyTo)}`);
         const replyData = this.messageMapper.getReplyToInfo(mappingId, targetPlatform);
         if (replyData) {
           replyToMessageId = replyData.messageId;
@@ -268,6 +269,7 @@ export class RelayManager {
         if (attachments.length === 0) attachments = undefined;
       }
 
+      logger.info(`SENDING TO ${targetPlatform}: replyToMessageId=${replyToMessageId}, hasReplyInfo=${!!replyInfo}`);
       const sentMessageId = await service.sendMessage(formattedContent, attachments, replyToMessageId);
       this.rateLimiter.recordMessage(targetPlatform, formattedContent, attachments);
       
