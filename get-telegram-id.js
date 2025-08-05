@@ -1,6 +1,6 @@
 const https = require('https');
 
-const token = '8224946532:AAEm1sKOIBwgSJ130B0hEhM3d1FyWbj51UM';
+const token = '7583393589:AAEy5gsKmlgyhVO4XjljZLDVilx9tSP5KFM'; // Use relayer bot token
 
 https.get(`https://api.telegram.org/bot${token}/getUpdates`, (res) => {
   let data = '';
