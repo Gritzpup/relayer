@@ -12,8 +12,8 @@ export class MessageFormatter {
 
     // Add reply formatting based on target platform
     if (replyInfo && targetPlatform === Platform.Twitch) {
-      // For Twitch, add @ mention since it doesn't support real replies
-      formattedContent = `@${replyInfo.author} ${formattedContent}`;
+      // For Twitch, add "replied to:" prefix since it doesn't support real replies
+      formattedContent = `replied to: ${replyInfo.author} - ${formattedContent}`;
     } else if (replyInfo && targetPlatform === Platform.Discord) {
       // For Discord, we'll handle this with message references in sendMessage
       // But add context for clarity
