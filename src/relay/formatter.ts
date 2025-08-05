@@ -70,11 +70,8 @@ export class MessageFormatter {
       formattedContent = `↩️ Replying to ${replyInfo.author}: "${replyPreview}"\n\n${formattedContent}`;
     } else if (replyInfo && targetPlatform === Platform.Telegram) {
       // For Telegram, if we don't have a message ID to reply to (native reply),
-      // add reply context to the message text
-      const replyPreview = replyInfo.content.length > 50 
-        ? replyInfo.content.substring(0, 50) + '...' 
-        : replyInfo.content;
-      formattedContent = `↩️ Replying to ${replyInfo.author}: "${replyPreview}"\n\n${formattedContent}`;
+      // add simplified reply context (no message preview since it's visible above)
+      formattedContent = `↩️ Replying to ${replyInfo.author}\n\n${formattedContent}`;
     }
     // For Telegram with proper message ID, we'll use reply_to_message_id in sendMessage
 

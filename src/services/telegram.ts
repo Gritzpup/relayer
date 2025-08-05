@@ -352,8 +352,8 @@ export class TelegramService implements PlatformService {
       let replyPlatform: Platform | undefined;
       if (replyMsg.from?.is_bot && replyContent) {
         // Pattern: [emoji] [Platform] username: message
-        // First try to extract platform
-        const platformMatch = replyContent.match(/\[(Discord|Twitch)\]\s+([^:]+):\s*(.*)/);
+        // First try to extract platform (with optional emoji prefix)
+        const platformMatch = replyContent.match(/(?:.*?)?\[(Discord|Twitch)\]\s+([^:]+):\s*(.*)/);
         if (platformMatch) {
           replyPlatform = platformMatch[1] as Platform;
           replyAuthor = platformMatch[2].trim();

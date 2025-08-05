@@ -247,8 +247,8 @@ export class DiscordService implements PlatformService {
           let replyPlatform: Platform | undefined;
           if (referencedMessage.author.bot && content) {
             // Pattern: [emoji] [Platform] username: message
-            // First try to extract platform
-            const platformMatch = content.match(/\[(Telegram|Twitch)\]\s+([^:]+):\s*(.*)/);
+            // First try to extract platform (with optional emoji prefix)
+            const platformMatch = content.match(/(?:.*?)?\[(Telegram|Twitch)\]\s+([^:]+):\s*(.*)/);
             if (platformMatch) {
               replyPlatform = platformMatch[1] as Platform;
               author = platformMatch[2].trim();

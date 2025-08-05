@@ -82,8 +82,12 @@ export class MessageMapper {
             if (replyToAuthor && replyToPlatform) {
               const potentialMapping = this.findMappingIdByAuthorAndPlatform(replyToAuthor, replyToPlatform);
               if (potentialMapping) {
+                // Special handling: We found the original message mapping
+                // Add the bot's message ID to this mapping so future lookups work
+                this.addPlatformMessage(potentialMapping, originalPlatform, replyToMessageId);
                 replyToMapping = potentialMapping;
                 logger.info(`REPLY CREATE: Found mapping by author and platform: ${potentialMapping} for ${replyToAuthor} from ${replyToPlatform}`);
+                logger.info(`REPLY CREATE: Added bot message ${replyToMessageId} to mapping for future lookups`);
               }
             }
             

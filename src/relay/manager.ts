@@ -204,30 +204,52 @@ export class RelayManager {
       let replyToMessageId: string | undefined;
       let replyInfo: { author: string; content: string } | undefined;
       
-      // First check if we can find the reply in our messageMapper (for cross-platform replies)
-      if (mappingId) {
+      // Always populate reply info if message has reply data
+      if (message.replyTo) {
+        replyInfo = { author: message.replyTo.author, content: message.replyTo.content };
+        logger.debug(`Message has reply info from ${message.platform}: replying to ${message.replyTo.author}`);
+      }
+      
+      // Then check if we can find the proper message ID in our messageMapper (for cross-platform replies)
+      if (mappingId && message.replyTo) {
         logger.info(`REPLY LOOKUP: Checking for reply info for mapping ${mappingId} on ${targetPlatform}`);
         const replyData = this.messageMapper.getReplyToInfo(mappingId, targetPlatform);
         if (replyData) {
           replyToMessageId = replyData.messageId;
+          // Update replyInfo with data from mapper if available
           replyInfo = { author: replyData.author, content: replyData.content };
           logger.info(`REPLY LOOKUP: Found target message ${replyToMessageId} on ${targetPlatform}`);
         } else {
           logger.info(`REPLY LOOKUP: No reply data found for mapping ${mappingId} on ${targetPlatform}`);
+          
+          // Special case: When replying to a bot message, we might need to look up the platform message differently
+          if (message.replyTo.platform && message.replyTo.messageId) {
+            // Try to find the mapping that contains the original message
+            const originalMapping = this.messageMapper.findMappingIdByAuthorAndPlatform(
+              message.replyTo.author, 
+              message.replyTo.platform
+            );
+            if (originalMapping) {
+              const mapping = this.messageMapper.getMapping(originalMapping);
+              if (mapping && mapping.platformMessages[targetPlatform]) {
+                replyToMessageId = mapping.platformMessages[targetPlatform];
+                logger.info(`REPLY LOOKUP: Found bot message ID ${replyToMessageId} on ${targetPlatform} via original mapping`);
+              }
+            }
+          }
         }
       }
-      
-      // If no cross-platform reply found but message has native reply info, use that
-      if (!replyInfo && message.replyTo) {
-        replyInfo = { author: message.replyTo.author, content: message.replyTo.content };
-        logger.debug(`Using native reply info from ${message.platform}: replying to ${message.replyTo.author}`);
-      }
 
-      // Only pass reply info to formatter if we don't have a proper message ID
-      // (for Telegram and Discord, we want to use the actual reply functionality when available)
-      // However, Twitch doesn't support native replies, so always pass reply info for Twitch
+      // Determine when to show reply context
+      // Show reply context when:
+      // 1. Target is Twitch (no native replies)
+      // 2. We have reply info but no proper message ID (can't link as native reply)
+      // 3. Source is Twitch (often can't be linked on other platforms)
       const hasProperReply = replyToMessageId !== undefined && targetPlatform !== Platform.Twitch;
-      const formatterReplyInfo = hasProperReply ? undefined : replyInfo;
+      const shouldShowReplyContext = (targetPlatform === Platform.Twitch) || 
+                                     (replyInfo && !replyToMessageId) || 
+                                     (message.platform === Platform.Twitch && message.replyTo);
+      const formatterReplyInfo = shouldShowReplyContext ? replyInfo : undefined;
       const formattedContent = this.formatter.formatForPlatform(message, targetPlatform, formatterReplyInfo);
       
       let attachments = message.attachments;
