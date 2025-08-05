@@ -115,7 +115,8 @@ export class TwitchService implements PlatformService {
       
       // Check if this is a relayed message (has platform prefix with or without emoji)
       // Pattern: [emoji] [Platform] username: message or just [Platform] username: message
-      const relayPattern = /^(?:[^\[]*)?(?:\[(Discord|Telegram)\]\s+)([^:]+):\s*(.*)$/;
+      // Updated to handle: "🎮 [Discord] username: message" or "[Discord] username: message"
+      const relayPattern = /^(?:.*?)?\[(Discord|Telegram)\]\s+([^:]+):\s*(.*)$/;
       const relayMatch = message.match(relayPattern);
       
       if (relayMatch) {
@@ -314,8 +315,31 @@ export class TwitchService implements PlatformService {
       const mentionedUser = mentionMatch[1].toLowerCase();
       actualContent = mentionMatch[2] || message;
       
+      logger.debug(`Reply detection: Looking for messages from @${mentionedUser}`);
+      logger.debug(`Current recent messages: ${Array.from(this.recentMessages.keys()).join(', ')}`);
+      
       // Look for recent message from mentioned user
-      const recentMessage = this.recentMessages.get(mentionedUser);
+      let recentMessage = this.recentMessages.get(mentionedUser);
+      
+      // If not found directly, search for relayed messages with this author
+      if (!recentMessage) {
+        logger.debug(`No direct message found from ${mentionedUser}, searching relayed messages`);
+        
+        // Search through all recent messages
+        for (const [key, msg] of this.recentMessages.entries()) {
+          // Skip if it's too old
+          const timeDiff = timestamp.getTime() - msg.timestamp.getTime();
+          if (timeDiff > 5 * 60 * 1000) continue; // Skip messages older than 5 minutes
+          
+          // Check if this message author matches (case insensitive)
+          if (msg.author.toLowerCase() === mentionedUser) {
+            recentMessage = msg;
+            logger.debug(`Found relayed message from ${mentionedUser} with key ${key}`);
+            break;
+          }
+        }
+      }
+      
       if (recentMessage) {
         // Check if message is recent enough (within 5 minutes)
         const timeDiff = timestamp.getTime() - recentMessage.timestamp.getTime();
@@ -327,6 +351,8 @@ export class TwitchService implements PlatformService {
           };
           logger.debug(`Detected Twitch reply from ${author} to ${recentMessage.author}`);
         }
+      } else {
+        logger.debug(`No recent message found from ${mentionedUser} for reply`);
       }
     }
     
@@ -344,6 +370,7 @@ export class TwitchService implements PlatformService {
   private storeRecentMessage(id: string, author: string, content: string, timestamp: Date): void {
     const authorKey = author.toLowerCase();
     this.recentMessages.set(authorKey, { id, author, content, timestamp });
+    logger.debug(`Stored message from ${author} (key: ${authorKey}) - "${content.substring(0, 50)}..."`);
     
     // Clean up old messages (older than 10 minutes)
     const cutoffTime = timestamp.getTime() - 10 * 60 * 1000;
