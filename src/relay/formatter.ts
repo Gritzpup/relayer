@@ -48,7 +48,7 @@ export class MessageFormatter {
         formattedContent = `${prefix}: ${formattedContent}`;
       } else {
         const icon = this.getPlatformIcon(message.platform, targetPlatform);
-        const prefix = `${icon} ${message.author}`;
+        const prefix = `${icon} [${message.platform}] ${message.author}`;
         formattedContent = `${prefix}: ${formattedContent}`;
       }
     }
