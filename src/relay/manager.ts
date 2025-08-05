@@ -86,6 +86,9 @@ export class RelayManager {
     // This allows us to handle replies to native messages
     if (message.replyTo) {
       logger.debug(`Processing message ${message.id} from ${message.platform} which is a reply to ${message.replyTo.messageId}`);
+      if (message.replyTo.platform) {
+        logger.debug(`Reply is to a message from platform: ${message.replyTo.platform}`);
+      }
     }
     
     const mappingId = this.messageMapper.createMapping(
@@ -95,7 +98,8 @@ export class RelayManager {
       message.author,
       message.replyTo?.messageId,
       message.replyTo?.content,
-      message.replyTo?.author
+      message.replyTo?.author,
+      message.replyTo?.platform
     );
 
     // Check if we should relay this message
@@ -202,14 +206,14 @@ export class RelayManager {
       
       // First check if we can find the reply in our messageMapper (for cross-platform replies)
       if (mappingId) {
-        logger.debug(`Checking for reply info for mapping ${mappingId} on ${targetPlatform}`);
+        logger.info(`REPLY LOOKUP: Checking for reply info for mapping ${mappingId} on ${targetPlatform}`);
         const replyData = this.messageMapper.getReplyToInfo(mappingId, targetPlatform);
         if (replyData) {
           replyToMessageId = replyData.messageId;
           replyInfo = { author: replyData.author, content: replyData.content };
-          logger.debug(`Message is a reply, found target message ${replyToMessageId} on ${targetPlatform}`);
+          logger.info(`REPLY LOOKUP: Found target message ${replyToMessageId} on ${targetPlatform}`);
         } else {
-          logger.debug(`No reply data found for mapping ${mappingId} on ${targetPlatform}`);
+          logger.info(`REPLY LOOKUP: No reply data found for mapping ${mappingId} on ${targetPlatform}`);
         }
       }
       
@@ -221,7 +225,8 @@ export class RelayManager {
 
       // Only pass reply info to formatter if we don't have a proper message ID
       // (for Telegram and Discord, we want to use the actual reply functionality when available)
-      const hasProperReply = replyToMessageId !== undefined;
+      // However, Twitch doesn't support native replies, so always pass reply info for Twitch
+      const hasProperReply = replyToMessageId !== undefined && targetPlatform !== Platform.Twitch;
       const formatterReplyInfo = hasProperReply ? undefined : replyInfo;
       const formattedContent = this.formatter.formatForPlatform(message, targetPlatform, formatterReplyInfo);
       
@@ -247,7 +252,9 @@ export class RelayManager {
       // Track the sent message ID in our mapping
       if (sentMessageId) {
         this.messageMapper.addPlatformMessage(mappingId, targetPlatform, sentMessageId);
-        logger.debug(`Tracked message ${sentMessageId} on ${targetPlatform} for mapping ${mappingId}`);
+        logger.info(`MAPPING: Added ${targetPlatform} message ${sentMessageId} to mapping ${mappingId}`);
+      } else {
+        logger.warn(`No message ID returned when sending to ${targetPlatform}`);
       }
       
     } catch (error) {

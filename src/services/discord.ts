@@ -244,13 +244,22 @@ export class DiscordService implements PlatformService {
           let content = referencedMessage.content || '[No content]';
           
           // If replying to a bot message, extract the original author from the message content
+          let replyPlatform: Platform | undefined;
           if (referencedMessage.author.bot && content) {
             // Pattern: [emoji] [Platform] username: message
-            // or just [Platform] username: message for Twitch
-            const authorMatch = content.match(/(?:^[^\[]*)?(?:\[[\w]+\]\s+)?([^:]+):\s*(.*)/);
-            if (authorMatch) {
-              author = authorMatch[1].trim();
-              content = authorMatch[2] || content;
+            // First try to extract platform
+            const platformMatch = content.match(/\[(Telegram|Twitch)\]\s+([^:]+):\s*(.*)/);
+            if (platformMatch) {
+              replyPlatform = platformMatch[1] as Platform;
+              author = platformMatch[2].trim();
+              content = platformMatch[3] || content;
+            } else {
+              // Fallback to original pattern without platform extraction
+              const authorMatch = content.match(/(?:^[^\[]*)?(?:\[[\w]+\]\s+)?([^:]+):\s*(.*)/);
+              if (authorMatch) {
+                author = authorMatch[1].trim();
+                content = authorMatch[2] || content;
+              }
             }
           }
           
@@ -258,8 +267,9 @@ export class DiscordService implements PlatformService {
             messageId: referencedMessage.id,
             author: author,
             content: content,
+            platform: replyPlatform,
           };
-          logger.debug(`Discord message ${message.id} is a reply to ${referencedMessage.id} (author: ${author})`);
+          logger.info(`Discord message ${message.id} is a reply to ${referencedMessage.id} (author: ${author}${replyPlatform ? `, platform: ${replyPlatform}` : ''})`);
         }
       } catch (error) {
         logger.debug(`Failed to fetch reference message: ${error}`);

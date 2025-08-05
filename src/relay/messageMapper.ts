@@ -37,36 +37,65 @@ export class MessageMapper {
     author: string,
     replyToMessageId?: string,
     replyToContent?: string,
-    replyToAuthor?: string
+    replyToAuthor?: string,
+    replyToPlatform?: Platform
   ): string {
     const mappingId = this.generateMappingId();
     
     // Find reply mapping if this is a reply
     let replyToMapping: string | undefined;
     if (replyToMessageId) {
-      // First check if the message being replied to exists in our mappings
-      const key = `${originalPlatform}:${replyToMessageId}`;
-      replyToMapping = this.messageIdToMappingId.get(key);
-      
-      if (!replyToMapping) {
-        logger.debug(`Looking for mapping of reply-to message ${replyToMessageId} on ${originalPlatform}`);
-        // The message being replied to might be a relayed message from another platform
-        // Check if we have a mapping ID for this message as a platform message
-        replyToMapping = this.getMappingIdByPlatformMessage(originalPlatform, replyToMessageId);
-        if (replyToMapping) {
-          logger.debug(`Found reply to relayed message: ${replyToMessageId} maps to mapping ${replyToMapping}`);
-        } else {
-          logger.debug(`No mapping found for platform message ${originalPlatform}:${replyToMessageId}`);
-          
-          // Try to find a mapping by content match (for native messages)
-          // This helps when replying to messages that weren't relayed by the bot
-          if (replyToContent && replyToAuthor) {
-            const potentialMapping = this.findMappingByContent(replyToContent, replyToAuthor, originalPlatform);
-            if (potentialMapping) {
-              replyToMapping = potentialMapping;
-              logger.debug(`Found potential mapping by content match: ${potentialMapping}`);
-              // Add this platform message to the mapping so future replies work
-              this.addPlatformMessage(potentialMapping, originalPlatform, replyToMessageId);
+      // Special handling for Twitch replies to cross-platform messages
+      if (originalPlatform === Platform.Twitch && replyToMessageId.includes('-')) {
+        // Twitch creates fake IDs like "Telegram-123456" for relayed messages
+        // Use the platform info if provided, otherwise extract from the fake ID
+        let sourcePlatform: Platform | undefined = replyToPlatform;
+        if (!sourcePlatform) {
+          const platformMatch = replyToMessageId.match(/^(Discord|Telegram)-/);
+          if (platformMatch) {
+            sourcePlatform = platformMatch[1] as Platform;
+          }
+        }
+        
+        if (sourcePlatform && replyToAuthor) {
+          replyToMapping = this.findMappingIdByAuthorAndPlatform(replyToAuthor, sourcePlatform);
+          if (replyToMapping) {
+            logger.debug(`Found Twitch cross-platform reply mapping: ${replyToMapping} for ${replyToAuthor} from ${sourcePlatform}`);
+          }
+        }
+      } else {
+        // Standard reply handling for Discord and Telegram
+        const key = `${originalPlatform}:${replyToMessageId}`;
+        replyToMapping = this.messageIdToMappingId.get(key);
+        
+        if (!replyToMapping) {
+          logger.info(`REPLY CREATE: Looking for mapping of reply-to message ${replyToMessageId} on ${originalPlatform}`);
+          // The message being replied to might be a relayed message from another platform
+          // Check if we have a mapping ID for this message as a platform message
+          replyToMapping = this.getMappingIdByPlatformMessage(originalPlatform, replyToMessageId);
+          if (replyToMapping) {
+            logger.info(`REPLY CREATE: Found reply to relayed message: ${replyToMessageId} maps to mapping ${replyToMapping}`);
+          } else {
+            logger.info(`REPLY CREATE: No mapping found for platform message ${originalPlatform}:${replyToMessageId}`);
+            
+            // Try to find a mapping by author and platform (for replies to bot messages)
+            if (replyToAuthor && replyToPlatform) {
+              const potentialMapping = this.findMappingIdByAuthorAndPlatform(replyToAuthor, replyToPlatform);
+              if (potentialMapping) {
+                replyToMapping = potentialMapping;
+                logger.info(`REPLY CREATE: Found mapping by author and platform: ${potentialMapping} for ${replyToAuthor} from ${replyToPlatform}`);
+              }
+            }
+            
+            // If still not found, try to find a mapping by content match (for native messages)
+            if (!replyToMapping && replyToContent && replyToAuthor) {
+              const potentialMapping = this.findMappingByContent(replyToContent, replyToAuthor, originalPlatform);
+              if (potentialMapping) {
+                replyToMapping = potentialMapping;
+                logger.debug(`Found potential mapping by content match: ${potentialMapping}`);
+                // Add this platform message to the mapping so future replies work
+                this.addPlatformMessage(potentialMapping, originalPlatform, replyToMessageId);
+              }
             }
           }
         }
@@ -95,7 +124,10 @@ export class MessageMapper {
     // Enforce cache size limit
     this.enforceMaxCacheSize();
     
-    logger.debug(`Created message mapping ${mappingId} for ${originalPlatform} message ${originalMessageId}${replyToMapping ? ` (reply to ${replyToMapping})` : ''}`);
+    logger.info(`MAPPING CREATED: ${mappingId} for ${originalPlatform} message ${originalMessageId}${replyToMapping ? ` (reply to ${replyToMapping})` : ''}`);
+    if (replyToMapping) {
+      logger.info(`REPLY MAPPING: Message ${originalMessageId} from ${originalPlatform} is a reply linked to mapping ${replyToMapping}`);
+    }
     
     return mappingId;
   }
@@ -113,7 +145,7 @@ export class MessageMapper {
     mapping.platformMessages[platform] = messageId;
     this.messageIdToMappingId.set(`${platform}:${messageId}`, mappingId);
     
-    logger.debug(`Added ${platform} message ${messageId} to mapping ${mappingId}`);
+    logger.info(`PLATFORM MESSAGE: Added ${platform} message ${messageId} to mapping ${mappingId}. Mapping now has: ${JSON.stringify(mapping.platformMessages)}`);
   }
 
   /**
@@ -157,28 +189,30 @@ export class MessageMapper {
   } | undefined {
     const mapping = this.mappings.get(mappingId);
     if (!mapping) {
-      logger.debug(`getReplyToInfo: No mapping found for ${mappingId}`);
+      logger.info(`getReplyToInfo: No mapping found for ${mappingId}`);
       return undefined;
     }
     
     if (!mapping.replyToMapping) {
-      logger.debug(`getReplyToInfo: Mapping ${mappingId} is not a reply`);
+      logger.info(`getReplyToInfo: Mapping ${mappingId} is not a reply`);
       return undefined;
     }
 
     const replyToMapping = this.mappings.get(mapping.replyToMapping);
     if (!replyToMapping) {
-      logger.debug(`getReplyToInfo: Reply-to mapping ${mapping.replyToMapping} not found`);
+      logger.info(`getReplyToInfo: Reply-to mapping ${mapping.replyToMapping} not found`);
       return undefined;
     }
 
+    logger.info(`getReplyToInfo: Reply-to mapping has platform messages: ${JSON.stringify(replyToMapping.platformMessages)}`);
+    
     const targetMessageId = replyToMapping.platformMessages[targetPlatform];
     if (!targetMessageId) {
-      logger.debug(`getReplyToInfo: No ${targetPlatform} message ID in reply-to mapping`);
+      logger.info(`getReplyToInfo: No ${targetPlatform} message ID in reply-to mapping`);
       return undefined;
     }
 
-    logger.debug(`getReplyToInfo: Found reply info for ${targetPlatform}: messageId=${targetMessageId}, author=${replyToMapping.author}`);
+    logger.info(`getReplyToInfo: Found reply info for ${targetPlatform}: messageId=${targetMessageId}, author=${replyToMapping.author}`);
     
     return {
       messageId: targetMessageId,
@@ -315,6 +349,37 @@ export class MessageMapper {
         this.messageIdToMappingId.delete(`${platform}:${messageId}`);
       }
     }
+  }
+
+  /**
+   * Find the mapping ID for a message by author and platform
+   * Used for Twitch replies to cross-platform messages
+   */
+  findMappingIdByAuthorAndPlatform(author: string, sourcePlatform: Platform, timeWindow: number = 300000): string | undefined {
+    const now = Date.now();
+    const cleanAuthor = author.trim().toLowerCase();
+    let mostRecentMapping: { id: string; timestamp: Date } | undefined;
+    
+    for (const [mappingId, mapping] of this.mappings.entries()) {
+      // Check if within time window (default 5 minutes)
+      const timeDiff = now - mapping.timestamp.getTime();
+      if (timeDiff > timeWindow) continue;
+      
+      // Check if author matches (case insensitive)
+      const mappingAuthor = mapping.author.trim().toLowerCase();
+      if (mappingAuthor !== cleanAuthor) continue;
+      
+      // Check if it's from the specified source platform
+      if (mapping.originalPlatform !== sourcePlatform) continue;
+      
+      // Update most recent if this is newer
+      if (!mostRecentMapping || mapping.timestamp > mostRecentMapping.timestamp) {
+        mostRecentMapping = { id: mappingId, timestamp: mapping.timestamp };
+      }
+    }
+    
+    logger.debug(`findMappingIdByAuthorAndPlatform: Looking for ${author} from ${sourcePlatform}, found: ${mostRecentMapping?.id || 'none'}`);
+    return mostRecentMapping?.id;
   }
 
   /**

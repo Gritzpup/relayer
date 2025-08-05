@@ -10,6 +10,8 @@ interface RecentMessage {
   author: string;
   content: string;
   timestamp: Date;
+  platform?: Platform; // Track which platform this message came from
+  mappingId?: string; // Store the MessageMapper ID if available
 }
 
 export class TwitchService implements PlatformService {
@@ -103,12 +105,6 @@ export class TwitchService implements PlatformService {
         return;
       }
       
-      // Skip messages from the bot account (backup check)
-      if (tags.username === config.twitch.username) {
-        logger.debug('Skipping message from bot account');
-        return;
-      }
-      
       if (channel !== `#${config.twitch.channel}`) {
         logger.debug(`Skipping message from wrong channel: ${channel} (expected #${config.twitch.channel})`);
         return;
@@ -125,22 +121,31 @@ export class TwitchService implements PlatformService {
       
       if (relayMatch) {
         logger.info(`RELAY CHECK: Platform=${relayMatch[1]}, Author=${relayMatch[2]}, Content=${relayMatch[3]}`);
-        const platform = relayMatch[1];
+        const platformStr = relayMatch[1];
         const originalAuthor = relayMatch[2].trim();
         const originalContent = relayMatch[3];
         const timestamp = new Date();
         
         // Store with the original author's name for reply detection
-        const messageId = `${platform}-${Date.now()}`;
+        const messageId = `${platformStr}-${Date.now()}`;
+        // Convert platform string to enum
+        const sourcePlatform = platformStr as Platform;
         this.storeRecentMessage(
           messageId,
           originalAuthor,
           originalContent,
-          timestamp
+          timestamp,
+          sourcePlatform
         );
         logger.info(`RELAY TRACKING: Stored message from ${originalAuthor} with content: "${originalContent.substring(0, 30)}..."`);
         logger.info(`RELAY TRACKING: Recent messages now has ${this.recentMessages.size} entries`);
         return; // Skip relaying it back
+      }
+      
+      // Skip messages from the bot account (backup check) - but only after checking for relayed messages
+      if (tags.username === config.twitch.username) {
+        logger.debug('Skipping message from bot account');
+        return;
       }
 
       this.status.messagesReceived++;
@@ -332,24 +337,58 @@ export class TwitchService implements PlatformService {
         logger.info(`  - Key: "${key}", Author: "${msg.author}", Content: "${msg.content.substring(0, 30)}..."`);
       }
       
-      // Look for recent message from mentioned user
-      let recentMessage = this.recentMessages.get(mentionedUser);
+      // Look for the message being replied to
+      let recentMessage: RecentMessage | undefined;
       
-      // If not found directly, search for relayed messages with this author
-      if (!recentMessage) {
-        logger.debug(`No direct message found from ${mentionedUser}, searching relayed messages`);
+      // Check if user is replying to the bot itself
+      if (mentionedUser === config.twitch.username.toLowerCase()) {
+        logger.info(`REPLY DETECTION: User is replying to the bot, finding most recent relayed message`);
         
-        // Search through all recent messages
+        // Find the most recent message from another platform
+        let mostRecentRelayed: RecentMessage | undefined;
+        const currentTime = timestamp.getTime();
+        
         for (const [key, msg] of this.recentMessages.entries()) {
           // Skip if it's too old
-          const timeDiff = timestamp.getTime() - msg.timestamp.getTime();
+          const timeDiff = currentTime - msg.timestamp.getTime();
           if (timeDiff > 5 * 60 * 1000) continue; // Skip messages older than 5 minutes
           
-          // Check if this message author matches (case insensitive)
-          if (msg.author.toLowerCase() === mentionedUser) {
-            recentMessage = msg;
-            logger.debug(`Found relayed message from ${mentionedUser} with key ${key}`);
-            break;
+          // Check if this message ID indicates it's from another platform
+          // Relayed messages have IDs like "Discord-123456" or "Telegram-123456"
+          if (msg.id.startsWith('Discord-') || msg.id.startsWith('Telegram-')) {
+            // Update most recent if this is newer
+            if (!mostRecentRelayed || msg.timestamp > mostRecentRelayed.timestamp) {
+              mostRecentRelayed = msg;
+            }
+          }
+        }
+        
+        if (mostRecentRelayed) {
+          recentMessage = mostRecentRelayed;
+          logger.info(`Found most recent relayed message from ${mostRecentRelayed.author}`);
+        } else {
+          logger.debug(`No recent relayed messages found for bot reply`);
+        }
+      } else {
+        // Look for recent message from mentioned user
+        recentMessage = this.recentMessages.get(mentionedUser);
+        
+        // If not found directly, search for relayed messages with this author
+        if (!recentMessage) {
+          logger.debug(`No direct message found from ${mentionedUser}, searching relayed messages`);
+          
+          // Search through all recent messages
+          for (const [key, msg] of this.recentMessages.entries()) {
+            // Skip if it's too old
+            const timeDiff = timestamp.getTime() - msg.timestamp.getTime();
+            if (timeDiff > 5 * 60 * 1000) continue; // Skip messages older than 5 minutes
+            
+            // Check if this message author matches (case insensitive)
+            if (msg.author.toLowerCase() === mentionedUser) {
+              recentMessage = msg;
+              logger.debug(`Found relayed message from ${mentionedUser} with key ${key}`);
+              break;
+            }
           }
         }
       }
@@ -362,8 +401,9 @@ export class TwitchService implements PlatformService {
             messageId: recentMessage.id,
             author: recentMessage.author,
             content: recentMessage.content,
+            platform: recentMessage.platform, // Include the platform information
           };
-          logger.debug(`Detected Twitch reply from ${author} to ${recentMessage.author}`);
+          logger.debug(`Detected Twitch reply from ${author} to ${recentMessage.author}${recentMessage.platform ? ` (from ${recentMessage.platform})` : ''}`);
         }
       } else {
         logger.debug(`No recent message found from ${mentionedUser} for reply`);
@@ -381,10 +421,10 @@ export class TwitchService implements PlatformService {
     };
   }
   
-  private storeRecentMessage(id: string, author: string, content: string, timestamp: Date): void {
+  private storeRecentMessage(id: string, author: string, content: string, timestamp: Date, platform?: Platform, mappingId?: string): void {
     const authorKey = author.toLowerCase();
-    logger.info(`STORE MESSAGE: Storing with key="${authorKey}" author="${author}" content="${content.substring(0, 50)}..."`);
-    this.recentMessages.set(authorKey, { id, author, content, timestamp });
+    logger.info(`STORE MESSAGE: Storing with key="${authorKey}" author="${author}" content="${content.substring(0, 50)}..."${platform ? ` from platform=${platform}` : ''}`);
+    this.recentMessages.set(authorKey, { id, author, content, timestamp, platform, mappingId });
     logger.info(`STORE MESSAGE: Map size after store: ${this.recentMessages.size}`);
     
     // Clean up old messages (older than 10 minutes)

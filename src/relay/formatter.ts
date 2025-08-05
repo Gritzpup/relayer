@@ -55,8 +55,11 @@ export class MessageFormatter {
 
     // Add reply formatting based on target platform
     if (replyInfo && targetPlatform === Platform.Twitch) {
-      // For Twitch, add "replied to:" prefix since it doesn't support real replies
-      formattedContent = `replied to: ${replyInfo.author} - ${formattedContent}`;
+      // For Twitch, add reply context since it doesn't support real replies
+      const replyPreview = replyInfo.content.length > 50 
+        ? replyInfo.content.substring(0, 50) + '...' 
+        : replyInfo.content;
+      formattedContent = `↩️ Replying to ${replyInfo.author}: "${replyPreview}"\n\n${formattedContent}`;
     } else if (replyInfo && targetPlatform === Platform.Discord) {
       // For Discord, only add reply context if we don't have a message reference
       // (handled in sendMessage with reply parameter)

@@ -16,6 +16,7 @@ export interface RelayMessage {
     messageId: string;
     author: string;
     content: string;
+    platform?: Platform; // Platform where the original message came from
   };
   isEdit?: boolean;
   originalMessageId?: string;

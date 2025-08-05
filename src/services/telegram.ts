@@ -349,12 +349,22 @@ export class TelegramService implements PlatformService {
       let replyContent = replyMsg.text || replyMsg.caption || '[No content]';
       
       // If replying to a bot message, extract the original author from the message content
+      let replyPlatform: Platform | undefined;
       if (replyMsg.from?.is_bot && replyContent) {
         // Pattern: [emoji] [Platform] username: message
-        const authorMatch = replyContent.match(/(?:^[^\[]*)?(?:\[[\w]+\]\s+)?([^:]+):\s*(.*)/);
-        if (authorMatch) {
-          replyAuthor = authorMatch[1].trim();
-          replyContent = authorMatch[2] || replyContent;
+        // First try to extract platform
+        const platformMatch = replyContent.match(/\[(Discord|Twitch)\]\s+([^:]+):\s*(.*)/);
+        if (platformMatch) {
+          replyPlatform = platformMatch[1] as Platform;
+          replyAuthor = platformMatch[2].trim();
+          replyContent = platformMatch[3] || replyContent;
+        } else {
+          // Fallback to original pattern without platform extraction
+          const authorMatch = replyContent.match(/(?:^[^\[]*)?(?:\[[\w]+\]\s+)?([^:]+):\s*(.*)/);
+          if (authorMatch) {
+            replyAuthor = authorMatch[1].trim();
+            replyContent = authorMatch[2] || replyContent;
+          }
         }
       }
       
@@ -362,8 +372,9 @@ export class TelegramService implements PlatformService {
         messageId: replyMsg.message_id.toString(),
         author: replyAuthor,
         content: replyContent,
+        platform: replyPlatform,
       };
-      logger.debug(`Telegram message ${msg.message_id} is a reply to ${replyMsg.message_id} (author: ${replyAuthor})`);
+      logger.info(`Telegram message ${msg.message_id} is a reply to ${replyMsg.message_id} (author: ${replyAuthor}${replyPlatform ? `, platform: ${replyPlatform}` : ''})`);
     }
     
     return {
