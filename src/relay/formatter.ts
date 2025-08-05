@@ -2,12 +2,32 @@ import { Platform, RelayMessage, Attachment } from '../types';
 import { config } from '../config';
 
 export class MessageFormatter {
+  private getPlatformIcon(platform: Platform): string {
+    switch (platform) {
+      case Platform.Discord:
+        return '🎮'; // Gaming controller for Discord
+      case Platform.Telegram:
+        return '✈️'; // Paper plane for Telegram
+      case Platform.Twitch:
+        return '📺'; // TV for Twitch
+      default:
+        return '💬'; // Default chat bubble
+    }
+  }
+
   formatForPlatform(message: RelayMessage, targetPlatform: Platform, replyInfo?: { author: string; content: string }): string {
     let formattedContent = message.content;
 
     if (config.relay.prefixEnabled) {
-      const prefix = `[${message.platform}] ${message.author}`;
-      formattedContent = `${prefix}: ${formattedContent}`;
+      // Use emoji icons for Discord and Telegram, keep text for Twitch
+      if (targetPlatform === Platform.Twitch) {
+        const prefix = `[${message.platform}] ${message.author}`;
+        formattedContent = `${prefix}: ${formattedContent}`;
+      } else {
+        const icon = this.getPlatformIcon(message.platform);
+        const prefix = `${icon} ${message.author}`;
+        formattedContent = `${prefix}: ${formattedContent}`;
+      }
     }
 
     // Add reply formatting based on target platform
