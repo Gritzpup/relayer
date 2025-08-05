@@ -55,7 +55,7 @@ export class DiscordService implements PlatformService {
       logPlatformMessage('Discord', 'in', message.content, message.author.username);
 
       if (this.messageHandler) {
-        const relayMessage = this.convertMessage(message);
+        const relayMessage = await this.convertMessage(message);
         
         // Debug logging for custom emojis
         if (relayMessage.attachments) {
@@ -108,13 +108,21 @@ export class DiscordService implements PlatformService {
     this.channel = channel as TextChannel;
   }
 
-  async sendMessage(content: string, attachments?: Attachment[]): Promise<string | undefined> {
+  async sendMessage(content: string, attachments?: Attachment[], replyToMessageId?: string): Promise<string | undefined> {
     if (!this.channel) {
       throw new Error('Discord channel not initialized');
     }
 
     const messageOptions: any = { content };
     const embeds: EmbedBuilder[] = [];
+
+    // Add reply reference if provided
+    if (replyToMessageId) {
+      messageOptions.reply = { 
+        messageReference: replyToMessageId,
+        failIfNotExists: false  // Don't fail if the message was deleted
+      };
+    }
 
     if (attachments && attachments.length > 0) {
       const regularAttachments: any[] = [];
@@ -160,7 +168,7 @@ export class DiscordService implements PlatformService {
     return { ...this.status };
   }
 
-  private convertMessage(message: Message): RelayMessage {
+  private async convertMessage(message: Message): Promise<RelayMessage> {
     const attachments: Attachment[] = message.attachments.map(att => ({
       type: this.getAttachmentType(att.contentType),
       url: att.url,
@@ -181,6 +189,24 @@ export class DiscordService implements PlatformService {
       });
     }
 
+    // Check if this is a reply
+    let replyTo: RelayMessage['replyTo'] | undefined;
+    if (message.reference && message.reference.messageId) {
+      try {
+        const referencedMessage = await message.fetchReference();
+        if (referencedMessage) {
+          replyTo = {
+            messageId: referencedMessage.id,
+            author: referencedMessage.author.username,
+            content: referencedMessage.content || '[No content]',
+          };
+          logger.debug(`Discord message ${message.id} is a reply to ${referencedMessage.id}`);
+        }
+      } catch (error) {
+        logger.debug(`Failed to fetch reference message: ${error}`);
+      }
+    }
+
     return {
       id: message.id,
       platform: Platform.Discord,
@@ -188,6 +214,7 @@ export class DiscordService implements PlatformService {
       content: message.content,
       timestamp: message.createdAt,
       attachments: attachments.length > 0 ? attachments : undefined,
+      replyTo,
       raw: message,
     };
   }

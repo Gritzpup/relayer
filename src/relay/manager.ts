@@ -125,7 +125,20 @@ export class RelayManager {
     }
 
     try {
-      const formattedContent = this.formatter.formatForPlatform(message, targetPlatform);
+      // Get reply information if this is a reply
+      let replyToMessageId: string | undefined;
+      let replyInfo: { author: string; content: string } | undefined;
+      
+      if (mappingId) {
+        const replyData = this.messageMapper.getReplyToInfo(mappingId, targetPlatform);
+        if (replyData) {
+          replyToMessageId = replyData.messageId;
+          replyInfo = { author: replyData.author, content: replyData.content };
+          logger.debug(`Message is a reply, found target message ${replyToMessageId} on ${targetPlatform}`);
+        }
+      }
+
+      const formattedContent = this.formatter.formatForPlatform(message, targetPlatform, replyInfo);
       
       let attachments = message.attachments;
       if (!config.relay.attachmentsEnabled) {
@@ -143,7 +156,7 @@ export class RelayManager {
         if (attachments.length === 0) attachments = undefined;
       }
 
-      const sentMessageId = await service.sendMessage(formattedContent, attachments);
+      const sentMessageId = await service.sendMessage(formattedContent, attachments, replyToMessageId);
       this.rateLimiter.recordMessage(targetPlatform, formattedContent, attachments);
       
       // Track the sent message ID in our mapping

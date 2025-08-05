@@ -108,9 +108,15 @@ export class TelegramService implements PlatformService {
     logger.info('Telegram disconnected');
   }
 
-  async sendMessage(content: string, attachments?: Attachment[]): Promise<string | undefined> {
+  async sendMessage(content: string, attachments?: Attachment[], replyToMessageId?: string): Promise<string | undefined> {
     const chatId = config.telegram.groupId;
     let messageId: string | undefined;
+
+    // Prepare options for reply
+    const messageOptions: any = {};
+    if (replyToMessageId) {
+      messageOptions.reply_to_message_id = parseInt(replyToMessageId);
+    }
 
     try {
       if (attachments && attachments.length > 0) {
@@ -134,6 +140,7 @@ export class TelegramService implements PlatformService {
             const msg = await this.bot.sendPhoto(chatId, customEmojis[0].url!, { 
               caption: content,
               disable_notification: true, // Less intrusive for emojis
+              ...messageOptions
             });
             messageId = msg.message_id.toString();
           }
@@ -144,21 +151,21 @@ export class TelegramService implements PlatformService {
           let msg: TelegramBot.Message;
           if (attachment.type === 'image' || attachment.type === 'gif') {
             if (attachment.url) {
-              msg = await this.bot.sendPhoto(chatId, attachment.url, { caption: content });
+              msg = await this.bot.sendPhoto(chatId, attachment.url, { caption: content, ...messageOptions });
             } else if (attachment.data) {
-              msg = await this.bot.sendPhoto(chatId, attachment.data, { caption: content });
+              msg = await this.bot.sendPhoto(chatId, attachment.data, { caption: content, ...messageOptions });
             }
           } else if (attachment.type === 'video') {
             if (attachment.url) {
-              msg = await this.bot.sendVideo(chatId, attachment.url, { caption: content });
+              msg = await this.bot.sendVideo(chatId, attachment.url, { caption: content, ...messageOptions });
             } else if (attachment.data) {
-              msg = await this.bot.sendVideo(chatId, attachment.data, { caption: content });
+              msg = await this.bot.sendVideo(chatId, attachment.data, { caption: content, ...messageOptions });
             }
           } else {
             if (attachment.url) {
-              msg = await this.bot.sendDocument(chatId, attachment.url, { caption: content });
+              msg = await this.bot.sendDocument(chatId, attachment.url, { caption: content, ...messageOptions });
             } else if (attachment.data) {
-              msg = await this.bot.sendDocument(chatId, attachment.data, { caption: content });
+              msg = await this.bot.sendDocument(chatId, attachment.data, { caption: content, ...messageOptions });
             }
           }
           if (msg! && !messageId) {
@@ -171,11 +178,11 @@ export class TelegramService implements PlatformService {
           // Content was already sent with the emoji
         } else if (otherAttachments.length === 0 && content && customEmojis.length === 0) {
           // No attachments, just send text
-          const msg = await this.bot.sendMessage(chatId, content);
+          const msg = await this.bot.sendMessage(chatId, content, messageOptions);
           messageId = msg.message_id.toString();
         }
       } else {
-        const msg = await this.bot.sendMessage(chatId, content);
+        const msg = await this.bot.sendMessage(chatId, content, messageOptions);
         messageId = msg.message_id.toString();
       }
       
@@ -292,6 +299,19 @@ export class TelegramService implements PlatformService {
       content = content.trim();
     }
     
+    // Check if this is a reply
+    let replyTo: RelayMessage['replyTo'] | undefined;
+    if (msg.reply_to_message) {
+      const replyMsg = msg.reply_to_message;
+      const replyAuthor = replyMsg.from?.username || replyMsg.from?.first_name || 'Unknown';
+      replyTo = {
+        messageId: replyMsg.message_id.toString(),
+        author: replyAuthor,
+        content: replyMsg.text || replyMsg.caption || '[No content]',
+      };
+      logger.debug(`Telegram message ${msg.message_id} is a reply to ${replyMsg.message_id}`);
+    }
+    
     return {
       id: msg.message_id.toString(),
       platform: Platform.Telegram,
@@ -299,6 +319,7 @@ export class TelegramService implements PlatformService {
       content: content,
       timestamp: new Date(msg.date * 1000),
       attachments: attachments.length > 0 ? attachments : undefined,
+      replyTo,
       raw: msg,
     };
   }

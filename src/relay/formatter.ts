@@ -2,13 +2,27 @@ import { Platform, RelayMessage, Attachment } from '../types';
 import { config } from '../config';
 
 export class MessageFormatter {
-  formatForPlatform(message: RelayMessage, targetPlatform: Platform): string {
+  formatForPlatform(message: RelayMessage, targetPlatform: Platform, replyInfo?: { author: string; content: string }): string {
     let formattedContent = message.content;
 
     if (config.relay.prefixEnabled) {
       const prefix = `[${message.platform}] ${message.author}`;
       formattedContent = `${prefix}: ${formattedContent}`;
     }
+
+    // Add reply formatting based on target platform
+    if (replyInfo && targetPlatform === Platform.Twitch) {
+      // For Twitch, add @ mention since it doesn't support real replies
+      formattedContent = `@${replyInfo.author} ${formattedContent}`;
+    } else if (replyInfo && targetPlatform === Platform.Discord) {
+      // For Discord, we'll handle this with message references in sendMessage
+      // But add context for clarity
+      const replyPreview = replyInfo.content.length > 50 
+        ? replyInfo.content.substring(0, 50) + '...' 
+        : replyInfo.content;
+      formattedContent = `> Replying to ${replyInfo.author}: ${replyPreview}\n${formattedContent}`;
+    }
+    // For Telegram, we'll use reply_to_message_id in sendMessage
 
     // Replace URLs with "(file attachment:unknown)" when sending to Twitch from Discord/Telegram
     if (targetPlatform === Platform.Twitch && 

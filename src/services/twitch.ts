@@ -167,7 +167,7 @@ export class TwitchService implements PlatformService {
     logger.info('Twitch disconnected');
   }
 
-  async sendMessage(content: string, attachments?: Attachment[]): Promise<string | undefined> {
+  async sendMessage(content: string, attachments?: Attachment[], _replyToMessageId?: string): Promise<string | undefined> {
     const channel = `#${config.twitch.channel}`;
     
     let messageContent = content;
@@ -183,6 +183,9 @@ export class TwitchService implements PlatformService {
       
       messageContent = `${content} ${attachmentInfo}`.trim();
     }
+
+    // Note: Twitch doesn't support replies, so replyToMessageId is ignored
+    // Reply formatting is handled by the formatter which adds @mentions
 
     await this.client.say(channel, messageContent);
     this.status.messagesSent++;
