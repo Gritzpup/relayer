@@ -3,6 +3,7 @@ import { config } from '../config';
 import { Platform, RelayMessage, MessageHandler, PlatformService, ServiceStatus, Attachment } from '../types';
 import { logger, logPlatformMessage, logError } from '../utils/logger';
 import { ReconnectManager } from '../utils/reconnect';
+import { TwitchAPI } from './twitchApi';
 
 interface RecentMessage {
   id: string;
@@ -18,6 +19,8 @@ export class TwitchService implements PlatformService {
   private reconnectManager: ReconnectManager;
   private isConnecting: boolean = false;
   private recentMessages: Map<string, RecentMessage> = new Map(); // Key: author (lowercase)
+  private api?: TwitchAPI;
+  private useApi: boolean = false;
   private status: ServiceStatus = {
     platform: Platform.Twitch,
     connected: false,
@@ -49,14 +52,46 @@ export class TwitchService implements PlatformService {
       }
     );
 
+    // Initialize Twitch API if client ID is provided
+    if (config.twitch.clientId && config.twitch.useApiForChat) {
+      // Extract access token from oauth string
+      const accessToken = config.twitch.oauth.startsWith('oauth:') 
+        ? config.twitch.oauth.substring(6) 
+        : config.twitch.oauth;
+        
+      this.api = new TwitchAPI(accessToken, config.twitch.clientId);
+      logger.info('Twitch API client initialized');
+    }
+
     this.setupEventHandlers();
   }
 
   private setupEventHandlers(): void {
-    this.client.on('connected', (addr: string, port: number) => {
+    this.client.on('connected', async (addr: string, port: number) => {
       logger.info(`Twitch connected to ${addr}:${port}`);
       this.status.connected = true;
       this.isConnecting = false;  // Reset connecting flag on successful connection
+      
+      // Check if we can use the Twitch API
+      if (this.api) {
+        try {
+          const hasScopes = await this.api.hasRequiredScopes();
+          if (hasScopes) {
+            // Validate and get broadcaster ID
+            const broadcasterId = await this.api.getBroadcaster(config.twitch.channel);
+            if (broadcasterId) {
+              this.useApi = true;
+              logger.info('Twitch Chat API enabled - messages will be sent via API');
+            } else {
+              logger.warn('Failed to get broadcaster ID - falling back to TMI.js');
+            }
+          } else {
+            logger.warn('Missing required scopes for Chat API - falling back to TMI.js');
+          }
+        } catch (error) {
+          logger.error('Failed to initialize Twitch API - falling back to TMI.js:', error);
+        }
+      }
     });
 
     this.client.on('message', async (channel: string, tags: tmi.ChatUserstate, message: string, self: boolean) => {
@@ -215,12 +250,29 @@ export class TwitchService implements PlatformService {
     // Note: Twitch doesn't support replies, so replyToMessageId is ignored
     // Reply formatting is handled by the formatter which adds @mentions
 
-    await this.client.say(channel, messageContent);
+    let messageId: string | undefined;
+    
+    // Try to use the API if available
+    if (this.useApi && this.api) {
+      try {
+        messageId = await this.api.sendChatMessage(config.twitch.channel, messageContent);
+        if (messageId) {
+          logger.debug(`Sent message via Twitch API with ID: ${messageId}`);
+        }
+      } catch (error) {
+        logger.warn('Failed to send via API, falling back to TMI.js:', error);
+        // Fall back to TMI.js
+        await this.client.say(channel, messageContent);
+      }
+    } else {
+      // Use TMI.js
+      await this.client.say(channel, messageContent);
+    }
+    
     this.status.messagesSent++;
     logPlatformMessage('Twitch', 'out', messageContent);
     
-    // Twitch doesn't provide message IDs
-    return undefined;
+    return messageId;
   }
 
   async editMessage(_messageId: string, _newContent: string): Promise<boolean> {

@@ -15,6 +15,8 @@ export interface Config {
     username: string;
     oauth: string;
     channel: string;
+    clientId?: string;
+    useApiForChat?: boolean;
   };
   relay: {
     prefixEnabled: boolean;
@@ -88,6 +90,8 @@ export const config: Config = {
     username: getEnvVar('TWITCH_USERNAME'),
     oauth: getEnvVar('TWITCH_OAUTH'),
     channel: getEnvVar('TWITCH_CHANNEL'),
+    clientId: getEnvVar('TWITCH_CLIENT_ID', ''),
+    useApiForChat: getEnvBool('TWITCH_USE_API_FOR_CHAT', true),
   },
   relay: {
     prefixEnabled: getEnvBool('RELAY_PREFIX_ENABLED', true),
