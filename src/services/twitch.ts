@@ -101,32 +101,39 @@ export class TwitchService implements PlatformService {
         logger.debug('Skipping self message');
         return;
       }
+      
+      // Skip messages from the bot account (backup check)
+      if (tags.username === config.twitch.username) {
+        logger.debug('Skipping message from bot account');
+        return;
+      }
+      
       if (channel !== `#${config.twitch.channel}`) {
         logger.debug(`Skipping message from wrong channel: ${channel} (expected #${config.twitch.channel})`);
         return;
       }
       
-      // Extract author from relayed messages for reply tracking
-      if (message.startsWith('[Discord]') || message.startsWith('[Telegram]')) {
+      // Check if this is a relayed message (has platform prefix with or without emoji)
+      // Pattern: [emoji] [Platform] username: message or just [Platform] username: message
+      const relayPattern = /^(?:[^\[]*)?(?:\[(Discord|Telegram)\]\s+)([^:]+):\s*(.*)$/;
+      const relayMatch = message.match(relayPattern);
+      
+      if (relayMatch) {
         logger.debug('Processing relayed message for reply tracking');
-        // Pattern: [Platform] username: message
-        const relayMatch = message.match(/^\[(Discord|Telegram)\]\s+([^:]+):\s*(.*)$/);
-        if (relayMatch) {
-          const platform = relayMatch[1];
-          const originalAuthor = relayMatch[2].trim();
-          const originalContent = relayMatch[3];
-          const timestamp = new Date();
-          
-          // Store with the original author's name for reply detection
-          this.storeRecentMessage(
-            `${platform}-${Date.now()}`, // Synthetic ID
-            originalAuthor,
-            originalContent,
-            timestamp
-          );
-          logger.debug(`Stored relayed message from ${originalAuthor} for reply tracking`);
-        }
-        return; // Still skip relaying it back
+        const platform = relayMatch[1];
+        const originalAuthor = relayMatch[2].trim();
+        const originalContent = relayMatch[3];
+        const timestamp = new Date();
+        
+        // Store with the original author's name for reply detection
+        this.storeRecentMessage(
+          `${platform}-${Date.now()}`, // Synthetic ID
+          originalAuthor,
+          originalContent,
+          timestamp
+        );
+        logger.debug(`Stored relayed message from ${originalAuthor} for reply tracking`);
+        return; // Skip relaying it back
       }
 
       this.status.messagesReceived++;
