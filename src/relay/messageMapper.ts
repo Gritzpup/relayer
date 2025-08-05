@@ -47,18 +47,14 @@ export class MessageMapper {
       replyToMapping = this.messageIdToMappingId.get(key);
       
       if (!replyToMapping) {
+        logger.debug(`Looking for mapping of reply-to message ${replyToMessageId} on ${originalPlatform}`);
         // The message being replied to might be a relayed message from another platform
-        // Check if we have a mapping for this message ID
-        const replyToMappingData = this.getMappingByPlatformMessage(originalPlatform, replyToMessageId);
-        if (replyToMappingData) {
-          // Find the mapping ID for this mapping
-          for (const [mapId, mapping] of this.mappings.entries()) {
-            if (mapping === replyToMappingData) {
-              replyToMapping = mapId;
-              break;
-            }
-          }
-          logger.debug(`Found reply to relayed message: ${replyToMessageId} maps to ${replyToMapping}`);
+        // Check if we have a mapping ID for this message as a platform message
+        replyToMapping = this.getMappingIdByPlatformMessage(originalPlatform, replyToMessageId);
+        if (replyToMapping) {
+          logger.debug(`Found reply to relayed message: ${replyToMessageId} maps to mapping ${replyToMapping}`);
+        } else {
+          logger.debug(`No mapping found for platform message ${originalPlatform}:${replyToMessageId}`);
         }
       }
       
@@ -114,10 +110,20 @@ export class MessageMapper {
     const mappingId = this.messageIdToMappingId.get(key);
     
     if (!mappingId) {
+      logger.debug(`No mapping ID found for key ${key}`);
       return undefined;
     }
     
+    logger.debug(`Found mapping ID ${mappingId} for key ${key}`);
     return this.mappings.get(mappingId);
+  }
+
+  /**
+   * Get a mapping ID by platform and message ID
+   */
+  getMappingIdByPlatformMessage(platform: Platform, messageId: string): string | undefined {
+    const key = `${platform}:${messageId}`;
+    return this.messageIdToMappingId.get(key);
   }
 
   /**

@@ -95,6 +95,9 @@ export class RelayManager {
     this.addToHistory(message);
 
     // Create a message mapping for tracking across platforms
+    if (message.replyTo) {
+      logger.debug(`Processing message ${message.id} from ${message.platform} which is a reply to ${message.replyTo.messageId}`);
+    }
     const mappingId = this.messageMapper.createMapping(
       message.platform,
       message.id,
