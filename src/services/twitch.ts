@@ -4,12 +4,20 @@ import { Platform, RelayMessage, MessageHandler, PlatformService, ServiceStatus,
 import { logger, logPlatformMessage, logError } from '../utils/logger';
 import { ReconnectManager } from '../utils/reconnect';
 
+interface RecentMessage {
+  id: string;
+  author: string;
+  content: string;
+  timestamp: Date;
+}
+
 export class TwitchService implements PlatformService {
   platform = Platform.Twitch;
   private client: tmi.Client;
   private messageHandler?: MessageHandler;
   private reconnectManager: ReconnectManager;
   private isConnecting: boolean = false;
+  private recentMessages: Map<string, RecentMessage> = new Map(); // Key: author (lowercase)
   private status: ServiceStatus = {
     platform: Platform.Twitch,
     connected: false,
@@ -63,10 +71,27 @@ export class TwitchService implements PlatformService {
         return;
       }
       
-      // Skip messages that are already relayed (have platform prefix)
+      // Extract author from relayed messages for reply tracking
       if (message.startsWith('[Discord]') || message.startsWith('[Telegram]')) {
-        logger.debug('Skipping already relayed message with platform prefix');
-        return;
+        logger.debug('Processing relayed message for reply tracking');
+        // Pattern: [Platform] username: message
+        const relayMatch = message.match(/^\[(Discord|Telegram)\]\s+([^:]+):\s*(.*)$/);
+        if (relayMatch) {
+          const platform = relayMatch[1];
+          const originalAuthor = relayMatch[2].trim();
+          const originalContent = relayMatch[3];
+          const timestamp = new Date();
+          
+          // Store with the original author's name for reply detection
+          this.storeRecentMessage(
+            `${platform}-${Date.now()}`, // Synthetic ID
+            originalAuthor,
+            originalContent,
+            timestamp
+          );
+          logger.debug(`Stored relayed message from ${originalAuthor} for reply tracking`);
+        }
+        return; // Still skip relaying it back
       }
 
       this.status.messagesReceived++;
@@ -163,6 +188,9 @@ export class TwitchService implements PlatformService {
       logger.debug('Error during Twitch disconnect (ignored):', error);
     }
     
+    // Clear recent messages on disconnect
+    this.recentMessages.clear();
+    
     this.status.connected = false;
     logger.info('Twitch disconnected');
   }
@@ -211,13 +239,59 @@ export class TwitchService implements PlatformService {
   }
 
   private convertMessage(tags: tmi.ChatUserstate, message: string): RelayMessage {
+    const id = tags.id || Date.now().toString();
+    const author = tags.username || 'Unknown';
+    const timestamp = new Date(parseInt(tags['tmi-sent-ts'] || Date.now().toString()));
+    
+    // Store this message in recent messages for future reply detection
+    this.storeRecentMessage(id, author, message, timestamp);
+    
+    // Check if this message is a reply (starts with @username)
+    let replyTo: RelayMessage['replyTo'] | undefined;
+    let actualContent = message;
+    
+    const mentionMatch = message.match(/^@(\w+):?\s*(.*)$/);
+    if (mentionMatch) {
+      const mentionedUser = mentionMatch[1].toLowerCase();
+      actualContent = mentionMatch[2] || message;
+      
+      // Look for recent message from mentioned user
+      const recentMessage = this.recentMessages.get(mentionedUser);
+      if (recentMessage) {
+        // Check if message is recent enough (within 5 minutes)
+        const timeDiff = timestamp.getTime() - recentMessage.timestamp.getTime();
+        if (timeDiff < 5 * 60 * 1000) { // 5 minutes
+          replyTo = {
+            messageId: recentMessage.id,
+            author: recentMessage.author,
+            content: recentMessage.content,
+          };
+          logger.debug(`Detected Twitch reply from ${author} to ${recentMessage.author}`);
+        }
+      }
+    }
+    
     return {
-      id: tags.id || Date.now().toString(),
+      id,
       platform: Platform.Twitch,
-      author: tags.username || 'Unknown',
-      content: message,
-      timestamp: new Date(parseInt(tags['tmi-sent-ts'] || Date.now().toString())),
+      author,
+      content: actualContent,
+      timestamp,
+      replyTo,
       raw: { tags, message },
     };
+  }
+  
+  private storeRecentMessage(id: string, author: string, content: string, timestamp: Date): void {
+    const authorKey = author.toLowerCase();
+    this.recentMessages.set(authorKey, { id, author, content, timestamp });
+    
+    // Clean up old messages (older than 10 minutes)
+    const cutoffTime = timestamp.getTime() - 10 * 60 * 1000;
+    for (const [key, msg] of this.recentMessages.entries()) {
+      if (msg.timestamp.getTime() < cutoffTime) {
+        this.recentMessages.delete(key);
+      }
+    }
   }
 }

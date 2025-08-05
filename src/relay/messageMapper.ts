@@ -242,6 +242,36 @@ export class MessageMapper {
     
     return undefined;
   }
+  
+  /**
+   * Find the most recent message from a specific author
+   * Used for reply detection in platforms that use @mentions
+   */
+  findRecentMessageByAuthor(author: string, platform: Platform, timeWindow: number = 300000): MessageMapping | undefined {
+    const now = Date.now();
+    const cleanAuthor = author.trim().toLowerCase();
+    let mostRecent: MessageMapping | undefined;
+    
+    for (const mapping of this.mappings.values()) {
+      // Check if within time window (default 5 minutes)
+      const timeDiff = now - mapping.timestamp.getTime();
+      if (timeDiff > timeWindow) continue;
+      
+      // Check if author matches (case insensitive)
+      const mappingAuthor = mapping.author.trim().toLowerCase();
+      if (mappingAuthor !== cleanAuthor) continue;
+      
+      // Check if it's from the specified platform
+      if (mapping.originalPlatform !== platform) continue;
+      
+      // Update most recent if this is newer
+      if (!mostRecent || mapping.timestamp > mostRecent.timestamp) {
+        mostRecent = mapping;
+      }
+    }
+    
+    return mostRecent;
+  }
 
   private generateMappingId(): string {
     return `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
