@@ -21,6 +21,11 @@ export interface Config {
     attachmentsEnabled: boolean;
     rateLimitPerMin: number;
     messageHistorySize: number;
+    customEmojis?: {
+      discord?: string;
+      telegram?: string;
+      twitch?: string;
+    };
   };
   logging: {
     level: string;
@@ -53,6 +58,23 @@ function getEnvNumber(key: string, defaultValue: number): number {
   return num;
 }
 
+// Helper function to parse custom emojis
+function getCustomEmojis(): Config['relay']['customEmojis'] | undefined {
+  const discordEmoji = process.env.CUSTOM_EMOJI_DISCORD;
+  const telegramEmoji = process.env.CUSTOM_EMOJI_TELEGRAM;
+  const twitchEmoji = process.env.CUSTOM_EMOJI_TWITCH;
+  
+  if (!discordEmoji && !telegramEmoji && !twitchEmoji) {
+    return undefined;
+  }
+  
+  return {
+    discord: discordEmoji,
+    telegram: telegramEmoji,
+    twitch: twitchEmoji,
+  };
+}
+
 export const config: Config = {
   discord: {
     token: getEnvVar('DISCORD_TOKEN'),
@@ -72,6 +94,7 @@ export const config: Config = {
     attachmentsEnabled: getEnvBool('RELAY_ATTACHMENTS', true),
     rateLimitPerMin: getEnvNumber('RELAY_RATE_LIMIT', 30),
     messageHistorySize: getEnvNumber('RELAY_HISTORY_SIZE', 100),
+    customEmojis: getCustomEmojis(),
   },
   logging: {
     level: getEnvVar('LOG_LEVEL', 'info'),

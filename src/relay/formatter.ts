@@ -2,7 +2,30 @@ import { Platform, RelayMessage, Attachment } from '../types';
 import { config } from '../config';
 
 export class MessageFormatter {
-  private getPlatformIcon(platform: Platform): string {
+  private getPlatformIcon(platform: Platform, targetPlatform: Platform): string {
+    // Check if we have custom emojis configured
+    if (config.relay.customEmojis && targetPlatform === Platform.Discord) {
+      // For Discord target, use Discord's custom emoji format
+      switch (platform) {
+        case Platform.Discord:
+          if (config.relay.customEmojis.discord) {
+            return config.relay.customEmojis.discord; // Should be in format <:name:id>
+          }
+          break;
+        case Platform.Telegram:
+          if (config.relay.customEmojis.telegram) {
+            return config.relay.customEmojis.telegram;
+          }
+          break;
+        case Platform.Twitch:
+          if (config.relay.customEmojis.twitch) {
+            return config.relay.customEmojis.twitch;
+          }
+          break;
+      }
+    }
+    
+    // Fallback to emoji icons
     switch (platform) {
       case Platform.Discord:
         return '🎮'; // Gaming controller for Discord
@@ -24,7 +47,7 @@ export class MessageFormatter {
         const prefix = `[${message.platform}] ${message.author}`;
         formattedContent = `${prefix}: ${formattedContent}`;
       } else {
-        const icon = this.getPlatformIcon(message.platform);
+        const icon = this.getPlatformIcon(message.platform, targetPlatform);
         const prefix = `${icon} ${message.author}`;
         formattedContent = `${prefix}: ${formattedContent}`;
       }
