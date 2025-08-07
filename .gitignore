@@ -37,3 +37,11 @@ temp/
 # Coverage
 coverage/
 .nyc_output/
+
+# Database
+*.db
+relay_messages.db
+
+# Sensitive tokens
+twitch_refresh_token.txt
+*_refresh_token.txt

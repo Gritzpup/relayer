@@ -5,6 +5,9 @@
  * Including the moderator:manage:chat_messages scope for message deletion
  */
 
+// Load environment variables
+require('dotenv').config();
+
 const TWITCH_CLIENT_ID = process.env.TWITCH_CLIENT_ID;
 
 if (!TWITCH_CLIENT_ID) {
