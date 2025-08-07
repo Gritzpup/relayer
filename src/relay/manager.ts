@@ -176,10 +176,16 @@ export class RelayManager {
 
     // Update the content in the mapping
     await this.messageMapper.updateMessageContent(message.platform, message.originalMessageId, message.content);
+    logger.info(`Updated content for ${message.platform}:${message.originalMessageId} to: "${message.content}"`);
 
     // Find all messages that reply to this edited message
     const replies = await this.messageMapper.findRepliesTo(mapping.id);
     logger.info(`Found ${replies.length} replies to edited message ${mapping.id}`);
+    
+    // Log details about each reply found
+    for (const reply of replies) {
+      logger.info(`Reply found: ${reply.id} from ${reply.originalPlatform}, platforms: ${JSON.stringify(reply.platformMessages)}`);
+    }
     
     // Handle replies in Twitch (need to delete and re-send with updated reply context)
     for (const reply of replies) {
@@ -212,16 +218,20 @@ export class RelayManager {
               };
               
               // Format the message with updated reply context
+              logger.info(`Formatting Twitch reply with updated context. Reply author: "${replyMessage.author}", Reply content: "${replyMessage.content}", Updated parent content: "${message.content}"`);
               const formattedContent = this.formatter.formatForPlatform(replyMessage, Platform.Twitch, {
                 author: message.author,
                 content: message.content
               });
+              logger.info(`Formatted Twitch reply: "${formattedContent}"`);
               
               // Send the new reply
               const newReplyId = await twitchService.sendMessage(formattedContent);
               if (newReplyId) {
                 await this.messageMapper.updatePlatformMessage(reply.id, Platform.Twitch, newReplyId);
                 logger.info(`Re-sent Twitch reply with new ID ${newReplyId}`);
+              } else {
+                logger.error(`Failed to re-send Twitch reply`);
               }
             } else {
               logger.warn(`Could not delete old Twitch reply ${twitchReplyId} - bot needs moderator permissions`);

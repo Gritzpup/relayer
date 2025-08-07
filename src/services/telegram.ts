@@ -48,6 +48,15 @@ export class TelegramService implements PlatformService {
   }
 
   private setupEventHandlers(): void {
+    // Debug log for all events
+    const originalEmit = this.bot.emit;
+    this.bot.emit = function(event: string, ...args: any[]) {
+      if (event === 'edited_message' || event === 'edit_message' || event.includes('edit')) {
+        logger.info(`TELEGRAM RAW EVENT: ${event}`, { messageId: args[0]?.message_id, text: args[0]?.text?.substring(0, 50) });
+      }
+      return originalEmit.apply(this, arguments as any);
+    };
+    
     this.bot.on('message', async (msg: TelegramBot.Message) => {
       if (msg.chat.id.toString() !== config.telegram.groupId) return;
       if (msg.from?.is_bot) return;
@@ -173,8 +182,16 @@ export class TelegramService implements PlatformService {
     });
 
     this.bot.on('edited_message', async (msg: TelegramBot.Message) => {
-      if (!msg.from || msg.from.is_bot) return;
-      if (msg.chat.id.toString() !== config.telegram.groupId) return;
+      logger.info(`TELEGRAM EDIT EVENT RECEIVED: message_id=${msg.message_id}, from=${msg.from?.username || 'unknown'}, chat_id=${msg.chat.id}`);
+      
+      if (!msg.from || msg.from.is_bot) {
+        logger.debug(`Skipping edited message: from_bot=${msg.from?.is_bot}`);
+        return;
+      }
+      if (msg.chat.id.toString() !== config.telegram.groupId) {
+        logger.debug(`Skipping edited message: wrong chat ${msg.chat.id} !== ${config.telegram.groupId}`);
+        return;
+      }
       
       // Get the topic/thread ID
       const threadId = msg.message_thread_id || undefined;
@@ -219,6 +236,7 @@ export class TelegramService implements PlatformService {
         relayMessage.originalMessageId = msg.message_id.toString();
         
         try {
+          // Always send the edit event to update the message content and handle reply updates
           await this.messageHandler(relayMessage);
         } catch (error) {
           logError(error as Error, 'Telegram edit handler');
