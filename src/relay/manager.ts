@@ -49,6 +49,12 @@ export class RelayManager {
 
     this.setupMessageHandlers();
 
+    // Initialize Twitch token manager before connecting
+    const twitchService = this.services.get(Platform.Twitch);
+    if (twitchService && 'initialize' in twitchService) {
+      await (twitchService as any).initialize();
+    }
+
     const connectionPromises = Array.from(this.services.values()).map(service => 
       service.connect().catch(error => {
         logError(error as Error, `Failed to connect ${service.platform}`);

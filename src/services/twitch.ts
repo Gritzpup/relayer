@@ -4,6 +4,7 @@ import { Platform, RelayMessage, MessageHandler, DeleteHandler, PlatformService,
 import { logger, logPlatformMessage, logError } from '../utils/logger';
 import { ReconnectManager } from '../utils/reconnect';
 import { TwitchAPI } from './twitchApi';
+import { twitchTokenManager } from './twitchTokenManager';
 
 interface RecentMessage {
   id: string;
@@ -32,6 +33,7 @@ export class TwitchService implements PlatformService {
   };
 
   constructor() {
+    // Initialize with config values first - will be updated when token manager initializes
     this.client = new tmi.Client({
       options: { debug: false },
       connection: {
@@ -217,12 +219,55 @@ export class TwitchService implements PlatformService {
         }
       }
       
+      // Get fresh token from token manager
+      try {
+        const accessToken = await twitchTokenManager.getAccessToken();
+        const oauthToken = `oauth:${accessToken}`;
+        
+        // Recreate client with new token
+        this.client = new tmi.Client({
+          options: { debug: false },
+          connection: {
+            reconnect: false,
+            secure: true,
+          },
+          identity: {
+            username: config.twitch.username,
+            password: oauthToken,
+          },
+          channels: [config.twitch.channel],
+        });
+        
+        // Re-setup event handlers for new client instance
+        this.setupEventHandlers();
+        
+        // Update API client if it exists
+        if (this.api) {
+          this.api = new TwitchAPI(accessToken, config.twitch.clientId);
+        }
+      } catch (tokenError) {
+        logger.error('Failed to get Twitch access token:', tokenError);
+        throw tokenError;
+      }
+      
       await this.client.connect();
     } catch (error) {
       this.isConnecting = false;
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(`Twitch connection error: ${errorMessage}`);
       throw error;
+    }
+  }
+
+  async initialize(): Promise<void> {
+    // Initialize token manager
+    try {
+      await twitchTokenManager.initialize();
+      twitchTokenManager.startAutoRefresh();
+      logger.info('Twitch token manager initialized');
+    } catch (error) {
+      logger.error('Failed to initialize Twitch token manager:', error);
+      // Continue with existing token from .env
     }
   }
 

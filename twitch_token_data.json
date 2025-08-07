@@ -1,0 +1,13 @@
+{
+  "access_token": "9u5bp6qawtabonei10tfnawspz8esf",
+  "refresh_token": "22sur89fvfbpqlb6abk5h7ytbh1zao848zw96zkzhhbflobnen",
+  "expires_at": 1754592388200,
+  "scope": [
+    "chat:edit",
+    "chat:read",
+    "moderator:manage:chat_messages",
+    "user:bot",
+    "user:read:chat",
+    "user:write:chat"
+  ]
+}
