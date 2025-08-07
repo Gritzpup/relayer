@@ -340,11 +340,19 @@ export class RelayManager {
       const mapping = channelMappings[message.channelName];
       if (targetPlatform === Platform.Discord) {
         targetChannelId = mapping.discord;
-      } else if (targetPlatform === Platform.Telegram && mapping.telegram) {
+      } else if (targetPlatform === Platform.Telegram) {
+        // For Telegram, null means general chat (no topic), which is valid
         targetChannelId = mapping.telegram;
+        // If targetChannelId is null/undefined but we have a mapping entry, it's the general chat
+        if (targetChannelId === null && mapping.hasOwnProperty('telegram')) {
+          targetChannelId = undefined; // This is valid for general chat
+        }
       }
       
-      if (!targetChannelId) {
+      if (!targetChannelId && targetPlatform === Platform.Discord) {
+        logger.warn(`No channel mapping found for ${message.channelName} to ${targetPlatform}, skipping message`);
+        return;
+      } else if (targetPlatform === Platform.Telegram && !mapping.hasOwnProperty('telegram')) {
         logger.warn(`No channel mapping found for ${message.channelName} to ${targetPlatform}, skipping message`);
         return;
       }

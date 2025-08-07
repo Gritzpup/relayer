@@ -53,26 +53,48 @@ export class TelegramService implements PlatformService {
       if (msg.from?.is_bot) return;
       
       // Get the topic/thread ID (for supergroups with topics)
-      const threadId = msg.message_thread_id || undefined;
-      
-      // Find channel name based on thread ID
+      let threadId = msg.message_thread_id || undefined;
       let channelName: string | undefined;
-      if (threadId) {
-        channelName = Object.keys(channelMappings).find(name => 
-          channelMappings[name].telegram === threadId.toString()
-        );
+      
+      // IMPORTANT: If this is a reply, we need to handle it differently
+      // In Telegram supergroups, replies might have the wrong message_thread_id
+      // We should process the reply and determine the channel from context
+      if (msg.reply_to_message) {
+        logger.info(`Processing reply message ${msg.message_id}, original thread_id: ${threadId}`);
+        
+        // For replies, try to determine the actual topic from the message being replied to
+        // Try to find the channel mapping, but don't skip if not found
+        if (threadId) {
+          channelName = Object.keys(channelMappings).find(name => 
+            channelMappings[name].telegram === threadId.toString()
+          );
+        }
+        
+        // If no channel found by thread ID, default to general
         if (!channelName) {
-          logger.debug(`No mapping found for Telegram topic ${threadId}, skipping message`);
-          return;
+          channelName = 'general';
+          logger.info(`Reply message ${msg.message_id} defaulting to #general channel`);
         }
       } else {
-        // General topic - check if any mapping has null telegram ID
-        channelName = Object.keys(channelMappings).find(name => 
-          !channelMappings[name].telegram
-        );
-        if (!channelName) {
-          logger.debug(`No mapping found for Telegram general topic, skipping message`);
-          return;
+        // For non-reply messages, use the original logic
+        // Find channel name based on thread ID
+        if (threadId) {
+          channelName = Object.keys(channelMappings).find(name => 
+            channelMappings[name].telegram === threadId.toString()
+          );
+          if (!channelName) {
+            logger.debug(`No mapping found for Telegram topic ${threadId}, skipping message`);
+            return;
+          }
+        } else {
+          // General topic - check if any mapping has null telegram ID
+          channelName = Object.keys(channelMappings).find(name => 
+            !channelMappings[name].telegram
+          );
+          if (!channelName) {
+            logger.debug(`No mapping found for Telegram general topic, skipping message`);
+            return;
+          }
         }
       }
 
@@ -141,7 +163,7 @@ export class TelegramService implements PlatformService {
       });
 
       if (this.messageHandler) {
-        const relayMessage = await this.convertMessage(msg);
+        const relayMessage = await this.convertMessage(msg, channelName);
         try {
           await this.messageHandler(relayMessage);
         } catch (error) {
@@ -192,7 +214,7 @@ export class TelegramService implements PlatformService {
       logPlatformMessage('Telegram', 'in', `(edited) ${content}`, username);
       
       if (this.messageHandler) {
-        const relayMessage = await this.convertMessage(msg);
+        const relayMessage = await this.convertMessage(msg, channelName);
         relayMessage.isEdit = true;
         relayMessage.originalMessageId = msg.message_id.toString();
         
@@ -486,7 +508,8 @@ export class TelegramService implements PlatformService {
               media: emoji.url!,
               caption: index === 0 ? content : undefined,
             }));
-            const messages = await sendWithRetry(() => this.bot.sendMediaGroup(chatId, media, messageOptions));
+            // sendMediaGroup returns an array, so handle it directly
+            const messages = await this.bot.sendMediaGroup(chatId, media, messageOptions);
             messageId = messages[0].message_id.toString();
           } else {
             // Single custom emoji - send as small photo
@@ -504,21 +527,21 @@ export class TelegramService implements PlatformService {
           let msg: TelegramBot.Message;
           if (attachment.type === 'image' || attachment.type === 'gif') {
             if (attachment.url) {
-              msg = await sendWithRetry(() => this.bot.sendPhoto(chatId, attachment.url, { caption: content, ...messageOptions }));
+              msg = await sendWithRetry(() => this.bot.sendPhoto(chatId, attachment.url!, { caption: content, ...messageOptions }));
             } else if (attachment.data) {
-              msg = await sendWithRetry(() => this.bot.sendPhoto(chatId, attachment.data, { caption: content, ...messageOptions }));
+              msg = await sendWithRetry(() => this.bot.sendPhoto(chatId, attachment.data!, { caption: content, ...messageOptions }));
             }
           } else if (attachment.type === 'video') {
             if (attachment.url) {
-              msg = await sendWithRetry(() => this.bot.sendVideo(chatId, attachment.url, { caption: content, ...messageOptions }));
+              msg = await sendWithRetry(() => this.bot.sendVideo(chatId, attachment.url!, { caption: content, ...messageOptions }));
             } else if (attachment.data) {
-              msg = await sendWithRetry(() => this.bot.sendVideo(chatId, attachment.data, { caption: content, ...messageOptions }));
+              msg = await sendWithRetry(() => this.bot.sendVideo(chatId, attachment.data!, { caption: content, ...messageOptions }));
             }
           } else {
             if (attachment.url) {
-              msg = await sendWithRetry(() => this.bot.sendDocument(chatId, attachment.url, { caption: content, ...messageOptions }));
+              msg = await sendWithRetry(() => this.bot.sendDocument(chatId, attachment.url!, { caption: content, ...messageOptions }));
             } else if (attachment.data) {
-              msg = await sendWithRetry(() => this.bot.sendDocument(chatId, attachment.data, { caption: content, ...messageOptions }));
+              msg = await sendWithRetry(() => this.bot.sendDocument(chatId, attachment.data!, { caption: content, ...messageOptions }));
             }
           }
           if (msg! && !messageId) {
@@ -594,7 +617,7 @@ export class TelegramService implements PlatformService {
     return { ...this.status };
   }
 
-  private async convertMessage(msg: TelegramBot.Message): Promise<RelayMessage> {
+  private async convertMessage(msg: TelegramBot.Message, overrideChannelName?: string): Promise<RelayMessage> {
     // Debug logging
     logger.info(`Converting Telegram message ${msg.message_id}:`, {
       text: msg.text,
@@ -703,15 +726,9 @@ export class TelegramService implements PlatformService {
     if (msg.reply_to_message) {
       const replyMsg = msg.reply_to_message;
       
-      // Skip if this is just a reply to the topic itself (not an actual message reply)
-      // In topics, messages have reply_to_message with message_id equal to the thread_id
-      if (msg.message_thread_id && replyMsg.message_id === msg.message_thread_id) {
-        // This is just the topic reference, not an actual reply
-        logger.debug(`Message ${msg.message_id} is in topic ${msg.message_thread_id}, not a real reply`);
-      } else {
-        // This is a real reply to another message
-        let replyAuthor = replyMsg.from?.username || replyMsg.from?.first_name || 'Unknown';
-        let replyContent = replyMsg.text || replyMsg.caption || '[No content]';
+      // Process the reply
+      let replyAuthor = replyMsg.from?.username || replyMsg.from?.first_name || 'Unknown';
+      let replyContent = replyMsg.text || replyMsg.caption || '[No content]';
       
       // If replying to a bot message, extract the original author from the message content
       let replyPlatform: Platform | undefined;
@@ -749,13 +766,16 @@ export class TelegramService implements PlatformService {
       } else {
         logger.info(`Telegram message ${msg.message_id} is replying to message ${replyMsg.message_id} with no retrievable content, treating as regular message`);
       }
-      } // End of real reply handling
-    } // End of reply_to_message check
+    }
     
-    // Get channel name from thread ID
+    // Get channel name from thread ID or use override
     const threadId = msg.message_thread_id || undefined;
     let channelName: string | undefined;
-    if (threadId) {
+    
+    // Use override if provided (for replies that default to general)
+    if (overrideChannelName) {
+      channelName = overrideChannelName;
+    } else if (threadId) {
       channelName = Object.keys(channelMappings).find(name => 
         channelMappings[name].telegram === threadId.toString()
       );
