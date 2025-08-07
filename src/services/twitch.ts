@@ -346,23 +346,26 @@ export class TwitchService implements PlatformService {
   async deleteMessage(messageId: string): Promise<boolean> {
     const channel = config.twitch.channel;
     
-    try {
-      // Twitch requires moderator permissions to delete messages
-      // Use the deletemessage method with the message ID
-      await this.client.deletemessage(channel, messageId);
-      logger.info(`Twitch message ${messageId} deleted successfully`);
-      return true;
-    } catch (error: any) {
-      const errorMsg = error.message || error.toString();
-      
-      // Check for specific error types
-      if (errorMsg.includes('unrecognized_cmd') || errorMsg.includes('No response')) {
-        logger.warn(`Cannot delete Twitch message ${messageId}: Bot needs moderator permissions in channel ${channel}`);
-      } else {
-        logger.error(`Failed to delete Twitch message ${messageId}: ${errorMsg}`);
+    // Try to use the API if available (requires moderator:manage:chat_messages scope)
+    if (this.useApi && this.api) {
+      try {
+        const success = await this.api.deleteChatMessage(channel, messageId);
+        if (success) {
+          return true;
+        }
+        // If API fails, don't fall back to TMI.js as it's deprecated
+        logger.warn(`Failed to delete message ${messageId} via API`);
+        return false;
+      } catch (error) {
+        logger.error(`Error deleting message via API: ${error}`);
+        return false;
       }
-      return false;
     }
+    
+    // TMI.js delete functionality is deprecated as of February 2023
+    // Twitch removed support for IRC-based moderation commands
+    logger.warn(`Cannot delete Twitch message ${messageId}: TMI.js delete is deprecated. Use Twitch API with moderator:manage:chat_messages scope instead.`);
+    return false;
   }
 
   onMessage(handler: MessageHandler): void {

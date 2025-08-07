@@ -148,6 +148,55 @@ export class TwitchAPI {
   }
 
   /**
+   * Delete a chat message using the Twitch API
+   * Requires moderator:manage:chat_messages scope
+   */
+  async deleteChatMessage(channelName: string, messageId: string): Promise<boolean> {
+    // Ensure we have broadcaster ID
+    if (!this.broadcasterId) {
+      const broadcasterId = await this.getBroadcaster(channelName);
+      if (!broadcasterId) {
+        logger.error(`Failed to get broadcaster ID for channel: ${channelName}`);
+        return false;
+      }
+    }
+
+    // Ensure we have user ID (moderator ID)
+    if (!this.userId) {
+      const valid = await this.validateToken();
+      if (!valid) {
+        logger.error('Failed to validate token for deleting message');
+        return false;
+      }
+    }
+
+    try {
+      // DELETE /helix/moderation/chat
+      await this.api.delete('/moderation/chat', {
+        params: {
+          broadcaster_id: this.broadcasterId,
+          moderator_id: this.userId,
+          message_id: messageId,
+        },
+      });
+
+      logger.info(`Successfully deleted Twitch message ${messageId} via API`);
+      return true;
+    } catch (error: any) {
+      if (error.response?.status === 403) {
+        logger.error('Forbidden: Bot needs moderator permissions or moderator:manage:chat_messages scope');
+      } else if (error.response?.status === 404) {
+        logger.warn('Message not found or already deleted');
+      } else if (error.response?.status === 400) {
+        logger.warn('Cannot delete message - might be from broadcaster or another moderator, or older than 6 hours');
+      } else {
+        logger.error(`Failed to delete message via Twitch API: ${error.message}`);
+      }
+      return false;
+    }
+  }
+
+  /**
    * Check if we have the required scopes for API chat
    */
   async hasRequiredScopes(): Promise<boolean> {
@@ -160,12 +209,21 @@ export class TwitchAPI {
       
       const scopes = response.data.scopes || [];
       const requiredScopes = ['user:write:chat', 'user:bot'];
+      const moderationScopes = ['moderator:manage:chat_messages'];
       
       const hasAllScopes = requiredScopes.every(scope => scopes.includes(scope));
+      const hasModScopes = moderationScopes.some(scope => scopes.includes(scope));
+      
       if (hasAllScopes) {
         logger.info('Twitch token has required scopes for Chat API');
       } else {
         logger.warn(`Missing required scopes. Have: ${scopes.join(', ')}`);
+      }
+      
+      if (hasModScopes) {
+        logger.info('Twitch token has moderator:manage:chat_messages scope for message deletion');
+      } else {
+        logger.warn('Missing moderator:manage:chat_messages scope - message deletion will not work');
       }
       
       return hasAllScopes;
