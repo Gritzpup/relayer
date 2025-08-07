@@ -194,6 +194,46 @@ export class MessageMapper {
   }
 
   /**
+   * Update a platform message ID (used when message is deleted and resent, like Twitch edits)
+   */
+  async updatePlatformMessage(mappingId: string, platform: Platform, newMessageId: string): Promise<void> {
+    // Get the mapping
+    const mapping = await getMessageMapping(this.MAPPING_PREFIX + mappingId);
+    if (!mapping) {
+      logger.error(`Cannot update platform message - mapping ${mappingId} not found`);
+      return;
+    }
+    
+    // Get the old message ID
+    const oldMessageId = mapping.platformMessages[platform];
+    
+    // Remove old reverse lookup if it exists
+    if (oldMessageId) {
+      await deleteMessageMapping(this.PLATFORM_PREFIX + platform + ':' + oldMessageId);
+    }
+    
+    // Update the mapping
+    mapping.platformMessages[platform] = newMessageId;
+    await setMessageMapping(this.MAPPING_PREFIX + mappingId, mapping, this.MAPPING_TTL);
+    
+    // Create new reverse lookup
+    await setMessageMapping(
+      this.PLATFORM_PREFIX + platform + ':' + newMessageId,
+      mappingId,
+      this.MAPPING_TTL
+    );
+    
+    // Async update database (don't await)
+    messageDb.trackPlatformMessage({
+      mappingId,
+      platform,
+      messageId: newMessageId
+    }).catch(err => logger.error('Failed to update platform message in database:', err));
+    
+    logger.info(`PLATFORM MESSAGE: Updated ${platform} message from ${oldMessageId} to ${newMessageId} in mapping ${mappingId}`);
+  }
+
+  /**
    * Get a mapping by platform and message ID
    */
   async getMappingByPlatformMessage(platform: Platform, messageId: string): Promise<MessageMapping | undefined> {

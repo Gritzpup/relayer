@@ -21,7 +21,18 @@ export class TelegramService implements PlatformService {
   };
 
   constructor() {
-    this.bot = new TelegramBot(config.telegram.botToken, { polling: false });
+    // Configure bot with proper timeout and request settings
+    this.bot = new TelegramBot(config.telegram.botToken, {
+      polling: false,
+      request: {
+        timeout: 30000, // 30 second timeout
+        agentOptions: {
+          keepAlive: true,
+          keepAliveMsecs: 10000
+        }
+      },
+      filepath: false // Disable automatic file downloads
+    });
     
     this.reconnectManager = new ReconnectManager(
       'Telegram',
@@ -68,13 +79,37 @@ export class TelegramService implements PlatformService {
       this.status.messagesReceived++;
       const username = msg.from?.username || msg.from?.first_name || 'Unknown';
       
-      // Debug the actual message structure
-      logger.info(`Telegram message in #${channelName}:`, {
+      // Enhanced debug logging for reply detection
+      const debugInfo = {
         message_id: msg.message_id,
-        text: msg.text,
+        text: msg.text?.substring(0, 50) + (msg.text && msg.text.length > 50 ? '...' : ''),
         topic_id: threadId || 'general',
-        from: msg.from?.username || msg.from?.first_name
-      });
+        from: msg.from?.username || msg.from?.first_name,
+        has_reply_to: !!msg.reply_to_message,
+        reply_to_id: msg.reply_to_message?.message_id,
+        message_thread_id: msg.message_thread_id,
+        chat_type: msg.chat.type,
+        is_topic_message: msg.is_topic_message
+      };
+      
+      logger.info(`Telegram message in #${channelName}:`, debugInfo);
+      
+      // Extra logging for reply detection issues
+      if (msg.reply_to_message) {
+        logger.info(`REPLY DETECTED - Full reply_to_message:`, {
+          reply_msg_id: msg.reply_to_message.message_id,
+          reply_from: msg.reply_to_message.from?.username || msg.reply_to_message.from?.first_name,
+          reply_text: msg.reply_to_message.text?.substring(0, 50),
+          reply_is_bot: msg.reply_to_message.from?.is_bot,
+          current_thread_id: msg.message_thread_id,
+          is_same_as_thread: msg.reply_to_message.message_id === msg.message_thread_id
+        });
+      }
+      
+      // Extra detailed logging for debugging reply issues
+      if (msg.text && msg.text.includes('reply') || msg.text && msg.text.includes('chicken')) {
+        logger.info(`FULL MESSAGE DUMP for potential reply:`, JSON.stringify(msg, null, 2));
+      }
       
       // Debug logging for stickers and custom emojis
       if (msg.sticker) {
@@ -170,15 +205,43 @@ export class TelegramService implements PlatformService {
     });
 
     this.bot.on('polling_error', (error: Error) => {
-      logError(error, 'Telegram polling error');
-      this.status.lastError = error.message;
+      const errorMessage = error.message || 'Unknown polling error';
+      
+      // Handle specific error types
+      if (errorMessage.includes('ETELEGRAM: 409') || errorMessage.includes('Conflict')) {
+        logger.error('Another instance of the bot is running. Stopping this instance.');
+        this.status.lastError = 'Bot conflict - another instance running';
+        this.isConnected = false;
+        this.status.connected = false;
+        return; // Don't reconnect for conflicts
+      }
+      
+      if (errorMessage.includes('ETIMEDOUT') || errorMessage.includes('ECONNRESET')) {
+        logger.warn('Telegram connection timeout/reset, will reconnect...');
+      } else if (errorMessage.includes('502 Bad Gateway') || errorMessage.includes('No workers running')) {
+        logger.warn('Telegram server issues detected, will retry...');
+      } else {
+        logError(error, 'Telegram polling error');
+      }
+      
+      this.status.lastError = errorMessage;
       this.status.connected = false;
+      this.isConnected = false;
       this.reconnectManager.scheduleReconnect();
     });
 
     this.bot.on('error', (error: Error) => {
-      logError(error, 'Telegram error');
-      this.status.lastError = error.message;
+      const errorMessage = error.message || 'Unknown error';
+      
+      // Don't log expected errors as errors
+      if (errorMessage.includes('message to edit not found') || 
+          errorMessage.includes('message to delete not found')) {
+        logger.debug(`Expected Telegram error: ${errorMessage}`);
+      } else {
+        logError(error, 'Telegram error');
+      }
+      
+      this.status.lastError = errorMessage;
     });
 
     // Listen for channel_post events (in case we're in a channel/supergroup)
@@ -284,16 +347,53 @@ export class TelegramService implements PlatformService {
   }
 
   private async connectInternal(): Promise<void> {
-    if (this.isConnected) {
-      await this.bot.stopPolling();
+    try {
+      if (this.isConnected) {
+        logger.info('Stopping existing Telegram polling...');
+        await this.bot.stopPolling({ cancel: true });
+        this.isConnected = false;
+      }
+      
+      logger.info('Starting Telegram polling with enhanced settings...');
+      await this.bot.startPolling({ 
+        polling: { 
+          interval: 1000, // Increased interval to reduce server load
+          autoStart: true,
+          params: {
+            timeout: 25, // Long polling timeout
+            allowed_updates: ['message', 'edited_message', 'callback_query']
+          }
+        },
+        restart: true // Auto-restart on errors
+      });
+      this.isConnected = true;
+      this.status.connected = true;
+      
+      // Test connection and verify bot permissions
+      const me = await this.bot.getMe();
+      logger.info(`Telegram bot connected as @${me.username}`);
+      
+      // Check bot permissions in the group
+      try {
+        const chat = await this.bot.getChat(config.telegram.groupId);
+        logger.info(`Connected to Telegram group: ${chat.title || 'Unknown'}, type: ${chat.type}`);
+        
+        // Get bot member info to check permissions
+        const botMember = await this.bot.getChatMember(config.telegram.groupId, me.id);
+        logger.info(`Bot permissions in group: ${JSON.stringify(botMember)}`);
+        
+        if (botMember.status === 'kicked' || botMember.status === 'left') {
+          throw new Error(`Bot is ${botMember.status} from the group`);
+        }
+      } catch (chatError) {
+        logger.error('Failed to get chat/member info:', chatError);
+      }
+    } catch (error) {
+      logger.error('Failed to connect to Telegram:', error);
+      this.isConnected = false;
+      this.status.connected = false;
+      throw error;
     }
-    
-    await this.bot.startPolling({ polling: { interval: 300, autoStart: true } });
-    this.isConnected = true;
-    this.status.connected = true;
-    
-    const me = await this.bot.getMe();
-    logger.info(`Telegram bot connected as @${me.username}`);
   }
 
   async connect(): Promise<void> {
@@ -315,9 +415,15 @@ export class TelegramService implements PlatformService {
   async sendMessage(content: string, attachments?: Attachment[], replyToMessageId?: string, targetChannelId?: string): Promise<string | undefined> {
     const chatId = config.telegram.groupId;
     let messageId: string | undefined;
+    let retryCount = 0;
+    const maxRetries = 3;
 
     // Prepare options for reply and topic
-    const messageOptions: any = {};
+    const messageOptions: any = {
+      parse_mode: undefined, // Don't use parse mode to avoid formatting issues
+      disable_web_page_preview: true
+    };
+    
     if (replyToMessageId) {
       messageOptions.reply_to_message_id = parseInt(replyToMessageId);
       logger.debug(`Telegram sendMessage: Setting reply_to_message_id to ${replyToMessageId}`);
@@ -330,6 +436,40 @@ export class TelegramService implements PlatformService {
       messageOptions.message_thread_id = parseInt(targetChannelId);
       logger.info(`Telegram sendMessage: Sending to topic ${targetChannelId}`);
     }
+
+    // Retry wrapper for API calls
+    const sendWithRetry = async (sendFunc: () => Promise<TelegramBot.Message>): Promise<TelegramBot.Message> => {
+      while (retryCount < maxRetries) {
+        try {
+          const startTime = Date.now();
+          const result = await sendFunc();
+          const duration = Date.now() - startTime;
+          
+          if (duration > 3000) {
+            logger.warn(`Telegram API call took ${duration}ms`);
+          }
+          
+          return result;
+        } catch (error: any) {
+          retryCount++;
+          const isRetryable = error.message && (
+            error.message.includes('ETIMEDOUT') ||
+            error.message.includes('ECONNRESET') ||
+            error.message.includes('502 Bad Gateway') ||
+            error.message.includes('No workers running')
+          );
+          
+          if (isRetryable && retryCount < maxRetries) {
+            const delay = Math.min(1000 * Math.pow(2, retryCount - 1), 5000);
+            logger.warn(`Telegram API error (attempt ${retryCount}/${maxRetries}), retrying in ${delay}ms:`, error.message);
+            await new Promise(resolve => setTimeout(resolve, delay));
+          } else {
+            throw error;
+          }
+        }
+      }
+      throw new Error('Max retries exceeded');
+    };
 
     try {
       if (attachments && attachments.length > 0) {
@@ -346,15 +486,15 @@ export class TelegramService implements PlatformService {
               media: emoji.url!,
               caption: index === 0 ? content : undefined,
             }));
-            const messages = await this.bot.sendMediaGroup(chatId, media, messageOptions);
+            const messages = await sendWithRetry(() => this.bot.sendMediaGroup(chatId, media, messageOptions));
             messageId = messages[0].message_id.toString();
           } else {
             // Single custom emoji - send as small photo
-            const msg = await this.bot.sendPhoto(chatId, customEmojis[0].url!, { 
+            const msg = await sendWithRetry(() => this.bot.sendPhoto(chatId, customEmojis[0].url!, { 
               caption: content,
               disable_notification: true, // Less intrusive for emojis
               ...messageOptions
-            });
+            }));
             messageId = msg.message_id.toString();
           }
         }
@@ -364,21 +504,21 @@ export class TelegramService implements PlatformService {
           let msg: TelegramBot.Message;
           if (attachment.type === 'image' || attachment.type === 'gif') {
             if (attachment.url) {
-              msg = await this.bot.sendPhoto(chatId, attachment.url, { caption: content, ...messageOptions });
+              msg = await sendWithRetry(() => this.bot.sendPhoto(chatId, attachment.url, { caption: content, ...messageOptions }));
             } else if (attachment.data) {
-              msg = await this.bot.sendPhoto(chatId, attachment.data, { caption: content, ...messageOptions });
+              msg = await sendWithRetry(() => this.bot.sendPhoto(chatId, attachment.data, { caption: content, ...messageOptions }));
             }
           } else if (attachment.type === 'video') {
             if (attachment.url) {
-              msg = await this.bot.sendVideo(chatId, attachment.url, { caption: content, ...messageOptions });
+              msg = await sendWithRetry(() => this.bot.sendVideo(chatId, attachment.url, { caption: content, ...messageOptions }));
             } else if (attachment.data) {
-              msg = await this.bot.sendVideo(chatId, attachment.data, { caption: content, ...messageOptions });
+              msg = await sendWithRetry(() => this.bot.sendVideo(chatId, attachment.data, { caption: content, ...messageOptions }));
             }
           } else {
             if (attachment.url) {
-              msg = await this.bot.sendDocument(chatId, attachment.url, { caption: content, ...messageOptions });
+              msg = await sendWithRetry(() => this.bot.sendDocument(chatId, attachment.url, { caption: content, ...messageOptions }));
             } else if (attachment.data) {
-              msg = await this.bot.sendDocument(chatId, attachment.data, { caption: content, ...messageOptions });
+              msg = await sendWithRetry(() => this.bot.sendDocument(chatId, attachment.data, { caption: content, ...messageOptions }));
             }
           }
           if (msg! && !messageId) {
@@ -391,11 +531,11 @@ export class TelegramService implements PlatformService {
           // Content was already sent with the emoji
         } else if (otherAttachments.length === 0 && content && customEmojis.length === 0) {
           // No attachments, just send text
-          const msg = await this.bot.sendMessage(chatId, content, messageOptions);
+          const msg = await sendWithRetry(() => this.bot.sendMessage(chatId, content, messageOptions));
           messageId = msg.message_id.toString();
         }
       } else {
-        const msg = await this.bot.sendMessage(chatId, content, messageOptions);
+        const msg = await sendWithRetry(() => this.bot.sendMessage(chatId, content, messageOptions));
         messageId = msg.message_id.toString();
       }
       
@@ -569,8 +709,9 @@ export class TelegramService implements PlatformService {
         // This is just the topic reference, not an actual reply
         logger.debug(`Message ${msg.message_id} is in topic ${msg.message_thread_id}, not a real reply`);
       } else {
-      let replyAuthor = replyMsg.from?.username || replyMsg.from?.first_name || 'Unknown';
-      let replyContent = replyMsg.text || replyMsg.caption || '[No content]';
+        // This is a real reply to another message
+        let replyAuthor = replyMsg.from?.username || replyMsg.from?.first_name || 'Unknown';
+        let replyContent = replyMsg.text || replyMsg.caption || '[No content]';
       
       // If replying to a bot message, extract the original author from the message content
       let replyPlatform: Platform | undefined;
@@ -608,8 +749,8 @@ export class TelegramService implements PlatformService {
       } else {
         logger.info(`Telegram message ${msg.message_id} is replying to message ${replyMsg.message_id} with no retrievable content, treating as regular message`);
       }
-      }
-    }
+      } // End of real reply handling
+    } // End of reply_to_message check
     
     // Get channel name from thread ID
     const threadId = msg.message_thread_id || undefined;

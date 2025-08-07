@@ -80,6 +80,8 @@ function getCustomEmojis(): Config['relay']['customEmojis'] | undefined {
 }
 
 // Channel mappings between Discord and Telegram
+// NOTE: Only messages from 'general' channel are relayed to Twitch
+// All other channels are Discord ↔ Telegram only
 export const channelMappings: ChannelMappings = {
   'vent': {
     discord: '1401061935604174928',

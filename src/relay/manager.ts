@@ -192,11 +192,41 @@ export class RelayManager {
         // Format the edited content for the target platform
         const formattedContent = this.formatter.formatForPlatform(message, targetPlatform);
         
-        if (targetPlatform === Platform.Twitch) {
-          // Twitch doesn't support edits, send a new message with "(edited)" indicator
-          const editedContent = `(edited) ${formattedContent}`;
-          await service.sendMessage(editedContent);
-          logger.info(`Sent edit as new message to Twitch`);
+        // Check if target is Twitch (string comparison to avoid TS narrowing issues)
+        if (targetPlatform.toString() === Platform.Twitch.toString()) {
+          // Twitch doesn't support edits, so try to delete old message first
+          let deleteSuccess = false;
+          try {
+            deleteSuccess = await service.deleteMessage(messageId);
+            if (deleteSuccess) {
+              logger.info(`Deleted old Twitch message ${messageId} before sending edit`);
+            } else {
+              logger.warn(`Could not delete old Twitch message ${messageId} - bot needs moderator permissions`);
+            }
+          } catch (error) {
+            logger.warn(`Error deleting old Twitch message: ${error}`);
+          }
+          
+          // Format message based on whether we could delete the old one
+          let messageToSend: string;
+          if (deleteSuccess) {
+            // Old message was deleted, send clean new message
+            messageToSend = formattedContent;
+          } else {
+            // Couldn't delete old message, make it VERY clear this is an edit
+            messageToSend = `[EDITED] ${formattedContent} (edited)`;
+          }
+          
+          // Send the new/edited message
+          const newMessageId = await service.sendMessage(messageToSend);
+          
+          // Update the mapping with the new Twitch message ID
+          if (newMessageId) {
+            await this.messageMapper.updatePlatformMessage(mapping.id, targetPlatform, newMessageId);
+            logger.info(`Sent edited message to Twitch with new ID ${newMessageId}`);
+          } else {
+            logger.info(`Sent edited message to Twitch`);
+          }
         } else {
           // Discord and Telegram support native edits
           const success = await service.editMessage(messageId, formattedContent);
@@ -300,8 +330,12 @@ export class RelayManager {
     
     // Twitch doesn't have multiple channels, so skip channel mapping for it
     if (targetPlatform === Platform.Twitch) {
-      // Twitch gets all messages, no channel mapping needed
-      logger.info(`Routing message from ${message.platform}${message.channelName ? ` #${message.channelName}` : ''} → Twitch`);
+      // Only relay general channel messages to Twitch
+      if (message.channelName && message.channelName !== 'general') {
+        logger.info(`Skipping ${message.channelName} message to Twitch - only general channel is relayed`);
+        return;
+      }
+      logger.info(`Routing message from ${message.platform} #general → Twitch`);
     } else if (message.channelName && channelMappings[message.channelName]) {
       const mapping = channelMappings[message.channelName];
       if (targetPlatform === Platform.Discord) {
@@ -318,10 +352,12 @@ export class RelayManager {
         (targetPlatform === Platform.Discord && channelMappings[name].discord === targetChannelId) ||
         (targetPlatform === Platform.Telegram && channelMappings[name].telegram === targetChannelId)
       ) || targetChannelId}`);
-    } else if (targetPlatform !== Platform.Twitch) {
+    } else {
       // No channel mapping and not Twitch, skip
-      logger.warn(`No channel info for message to ${targetPlatform}, skipping`);
-      return;
+      if (targetPlatform.toString() !== Platform.Twitch.toString()) {
+        logger.warn(`No channel info for message to ${targetPlatform}, skipping`);
+        return;
+      }
     }
 
     if (!this.rateLimiter.canSendMessage(targetPlatform)) {
