@@ -1,15 +1,18 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { config } from '../config';
-import { Platform, RelayMessage, MessageHandler, PlatformService, ServiceStatus, Attachment } from '../types';
+import { config, channelMappings } from '../config';
+import { Platform, RelayMessage, MessageHandler, DeleteHandler, PlatformService, ServiceStatus, Attachment } from '../types';
 import { logger, logPlatformMessage, logError } from '../utils/logger';
 import { ReconnectManager } from '../utils/reconnect';
+import { messageDb } from '../database/db';
 
 export class TelegramService implements PlatformService {
   platform = Platform.Telegram;
   private bot: TelegramBot;
   private messageHandler?: MessageHandler;
+  private deleteHandler?: DeleteHandler;
   private reconnectManager: ReconnectManager;
   private isConnected: boolean = false;
+  private messageTracker: Map<number, string> = new Map(); // Track message ID to mapping ID
   private status: ServiceStatus = {
     platform: Platform.Telegram,
     connected: false,
@@ -37,9 +40,41 @@ export class TelegramService implements PlatformService {
     this.bot.on('message', async (msg: TelegramBot.Message) => {
       if (msg.chat.id.toString() !== config.telegram.groupId) return;
       if (msg.from?.is_bot) return;
+      
+      // Get the topic/thread ID (for supergroups with topics)
+      const threadId = msg.message_thread_id || undefined;
+      
+      // Find channel name based on thread ID
+      let channelName: string | undefined;
+      if (threadId) {
+        channelName = Object.keys(channelMappings).find(name => 
+          channelMappings[name].telegram === threadId.toString()
+        );
+        if (!channelName) {
+          logger.debug(`No mapping found for Telegram topic ${threadId}, skipping message`);
+          return;
+        }
+      } else {
+        // General topic - check if any mapping has null telegram ID
+        channelName = Object.keys(channelMappings).find(name => 
+          !channelMappings[name].telegram
+        );
+        if (!channelName) {
+          logger.debug(`No mapping found for Telegram general topic, skipping message`);
+          return;
+        }
+      }
 
       this.status.messagesReceived++;
       const username = msg.from?.username || msg.from?.first_name || 'Unknown';
+      
+      // Debug the actual message structure
+      logger.info(`Telegram message in #${channelName}:`, {
+        message_id: msg.message_id,
+        text: msg.text,
+        topic_id: threadId || 'general',
+        from: msg.from?.username || msg.from?.first_name
+      });
       
       // Debug logging for stickers and custom emojis
       if (msg.sticker) {
@@ -59,6 +94,16 @@ export class TelegramService implements PlatformService {
       }));
       
       logPlatformMessage('Telegram', 'in', msg.text || msg.caption || '[Media]', username);
+      
+      // Track message in database
+      await messageDb.trackMessage({
+        telegramMsgId: msg.message_id,
+        chatId: msg.chat.id,
+        userId: msg.from?.id,
+        username: msg.from?.username || msg.from?.first_name || 'Unknown',
+        content: msg.text || msg.caption || '[Media]',
+        platform: 'Telegram'
+      });
 
       if (this.messageHandler) {
         const relayMessage = await this.convertMessage(msg);
@@ -73,6 +118,37 @@ export class TelegramService implements PlatformService {
     this.bot.on('edited_message', async (msg: TelegramBot.Message) => {
       if (!msg.from || msg.from.is_bot) return;
       if (msg.chat.id.toString() !== config.telegram.groupId) return;
+      
+      // Get the topic/thread ID
+      const threadId = msg.message_thread_id || undefined;
+      
+      // Find channel name based on thread ID
+      let channelName: string | undefined;
+      if (threadId) {
+        channelName = Object.keys(channelMappings).find(name => 
+          channelMappings[name].telegram === threadId.toString()
+        );
+      } else {
+        channelName = Object.keys(channelMappings).find(name => 
+          !channelMappings[name].telegram
+        );
+      }
+      
+      if (!channelName) {
+        logger.debug(`No mapping found for Telegram topic, skipping edited message`);
+        return;
+      }
+      
+      // Check if this might be a deletion (some Telegram clients send empty edits for deletions)
+      if (!msg.text && !msg.caption && !msg.photo && !msg.document && !msg.video) {
+        const mappingId = this.messageTracker.get(msg.message_id);
+        if (mappingId && this.deleteHandler) {
+          logger.info(`Detected possible deletion via empty edit for Telegram message ${msg.message_id}`);
+          await this.deleteHandler(Platform.Telegram, msg.message_id.toString());
+          this.messageTracker.delete(msg.message_id);
+          return;
+        }
+      }
       
       const username = msg.from.username || msg.from.first_name || 'Unknown';
       const content = msg.text || msg.caption || '[Media]';
@@ -104,6 +180,107 @@ export class TelegramService implements PlatformService {
       logError(error, 'Telegram error');
       this.status.lastError = error.message;
     });
+
+    // Listen for channel_post events (in case we're in a channel/supergroup)
+    this.bot.on('channel_post', async (msg: TelegramBot.Message) => {
+      // In channels, we might get deletion info
+      logger.debug(`Channel post event: ${JSON.stringify(msg)}`);
+    });
+
+    // Listen for callback queries (for future inline button implementation)
+    this.bot.on('callback_query', async (query) => {
+      logger.debug(`Callback query: ${JSON.stringify(query)}`);
+    });
+
+    // Add command handler for /delete
+    this.bot.onText(/^\/delete$/, async (msg) => {
+      if (msg.chat.id.toString() !== config.telegram.groupId) return;
+      if (!msg.from || msg.from.is_bot) return;
+
+      // Check if this is a reply to a message
+      if (msg.reply_to_message) {
+        const repliedMsg = msg.reply_to_message;
+        
+        // Check if the replied message is from the bot (a relayed message)
+        if (repliedMsg.from && repliedMsg.from.id === parseInt(config.telegram.botToken.split(':')[0])) {
+          // Extract the original author from the message
+          const match = repliedMsg.text?.match(/\[(Discord|Twitch)\]\s+([^:]+):\s*/);
+          if (match) {
+            const author = match[2].trim();
+            const requestingUser = msg.from.username || msg.from.first_name || 'Unknown';
+            
+            // Check if the requesting user matches the original author
+            if (author.toLowerCase() === requestingUser.toLowerCase()) {
+              // Find the mapping for this bot message
+              const botMessageId = repliedMsg.message_id;
+              
+              // Look through our mappings to find this message
+              // We need to trigger deletion based on the bot's message ID
+              if (this.deleteHandler) {
+                logger.info(`User ${requestingUser} requested deletion of their message via /delete command`);
+                await this.deleteHandler(Platform.Telegram, botMessageId.toString());
+                
+                // Delete the command message and the bot's message
+                await this.bot.deleteMessage(msg.chat.id, msg.message_id);
+                await this.bot.deleteMessage(msg.chat.id, botMessageId);
+              }
+            } else {
+              // Not the original author
+              const response = await this.bot.sendMessage(msg.chat.id, 
+                `❌ You can only delete your own messages.`, 
+                { reply_to_message_id: msg.message_id }
+              );
+              
+              // Delete the response after 5 seconds
+              setTimeout(() => {
+                this.bot.deleteMessage(msg.chat.id, response.message_id);
+                this.bot.deleteMessage(msg.chat.id, msg.message_id);
+              }, 5000);
+            }
+          }
+        } else {
+          // Not a bot message
+          const response = await this.bot.sendMessage(msg.chat.id, 
+            `❌ Reply to a relayed message with /delete to remove it.`, 
+            { reply_to_message_id: msg.message_id }
+          );
+          
+          // Delete the response after 5 seconds
+          setTimeout(() => {
+            this.bot.deleteMessage(msg.chat.id, response.message_id);
+            this.bot.deleteMessage(msg.chat.id, msg.message_id);
+          }, 5000);
+        }
+      } else {
+        // No reply
+        const response = await this.bot.sendMessage(msg.chat.id, 
+          `ℹ️ Reply to a relayed message with /delete to remove it from all platforms.`, 
+          { reply_to_message_id: msg.message_id }
+        );
+        
+        // Delete the response after 5 seconds
+        setTimeout(() => {
+          this.bot.deleteMessage(msg.chat.id, response.message_id);
+          this.bot.deleteMessage(msg.chat.id, msg.message_id);
+        }, 5000);
+      }
+    });
+
+  }
+
+  // Track a message ID to mapping ID relationship
+  trackMessage(messageId: number, mappingId: string): void {
+    this.messageTracker.set(messageId, mappingId);
+    logger.info(`Tracking Telegram message ${messageId} with mapping ${mappingId}`);
+    
+    // Clean up old entries - limit map size
+    if (this.messageTracker.size > 1000) {
+      // Remove oldest entries
+      const firstKey = this.messageTracker.keys().next().value;
+      if (firstKey) {
+        this.messageTracker.delete(firstKey);
+      }
+    }
   }
 
   private async connectInternal(): Promise<void> {
@@ -125,23 +302,33 @@ export class TelegramService implements PlatformService {
 
   async disconnect(): Promise<void> {
     this.reconnectManager.stop();
+    
+    // Clear message tracker
+    this.messageTracker.clear();
+    
     await this.bot.stopPolling();
     this.isConnected = false;
     this.status.connected = false;
     logger.info('Telegram disconnected');
   }
 
-  async sendMessage(content: string, attachments?: Attachment[], replyToMessageId?: string): Promise<string | undefined> {
+  async sendMessage(content: string, attachments?: Attachment[], replyToMessageId?: string, targetChannelId?: string): Promise<string | undefined> {
     const chatId = config.telegram.groupId;
     let messageId: string | undefined;
 
-    // Prepare options for reply
+    // Prepare options for reply and topic
     const messageOptions: any = {};
     if (replyToMessageId) {
       messageOptions.reply_to_message_id = parseInt(replyToMessageId);
       logger.debug(`Telegram sendMessage: Setting reply_to_message_id to ${replyToMessageId}`);
     } else {
       logger.debug(`Telegram sendMessage: No replyToMessageId provided`);
+    }
+    
+    // Add message_thread_id for topic support
+    if (targetChannelId) {
+      messageOptions.message_thread_id = parseInt(targetChannelId);
+      logger.info(`Telegram sendMessage: Sending to topic ${targetChannelId}`);
     }
 
     try {
@@ -226,6 +413,8 @@ export class TelegramService implements PlatformService {
     const chatId = config.telegram.groupId;
 
     try {
+      // Note: Telegram API automatically handles editing messages in the correct topic
+      // as long as we have the correct message_id
       await this.bot.editMessageText(newContent, {
         chat_id: chatId,
         message_id: parseInt(messageId),
@@ -238,8 +427,27 @@ export class TelegramService implements PlatformService {
     }
   }
 
+  async deleteMessage(messageId: string): Promise<boolean> {
+    const chatId = config.telegram.groupId;
+
+    try {
+      // Note: Telegram API automatically handles deleting messages in the correct topic
+      // as long as we have the correct message_id
+      await this.bot.deleteMessage(chatId, parseInt(messageId));
+      logger.info(`Telegram message ${messageId} deleted successfully`);
+      return true;
+    } catch (error) {
+      logger.error(`Failed to delete Telegram message ${messageId}: ${error}`);
+      return false;
+    }
+  }
+
   onMessage(handler: MessageHandler): void {
     this.messageHandler = handler;
+  }
+
+  onDelete(handler: DeleteHandler): void {
+    this.deleteHandler = handler;
   }
 
   getStatus(): ServiceStatus {
@@ -247,6 +455,15 @@ export class TelegramService implements PlatformService {
   }
 
   private async convertMessage(msg: TelegramBot.Message): Promise<RelayMessage> {
+    // Debug logging
+    logger.info(`Converting Telegram message ${msg.message_id}:`, {
+      text: msg.text,
+      caption: msg.caption,
+      hasReplyTo: !!msg.reply_to_message,
+      replyToId: msg.reply_to_message?.message_id,
+      from: msg.from?.username || msg.from?.first_name
+    });
+    
     const attachments: Attachment[] = [];
 
     // Handle custom emoji entities
@@ -345,36 +562,66 @@ export class TelegramService implements PlatformService {
     let replyTo: RelayMessage['replyTo'] | undefined;
     if (msg.reply_to_message) {
       const replyMsg = msg.reply_to_message;
+      
+      // Skip if this is just a reply to the topic itself (not an actual message reply)
+      // In topics, messages have reply_to_message with message_id equal to the thread_id
+      if (msg.message_thread_id && replyMsg.message_id === msg.message_thread_id) {
+        // This is just the topic reference, not an actual reply
+        logger.debug(`Message ${msg.message_id} is in topic ${msg.message_thread_id}, not a real reply`);
+      } else {
       let replyAuthor = replyMsg.from?.username || replyMsg.from?.first_name || 'Unknown';
       let replyContent = replyMsg.text || replyMsg.caption || '[No content]';
       
       // If replying to a bot message, extract the original author from the message content
       let replyPlatform: Platform | undefined;
       if (replyMsg.from?.is_bot && replyContent) {
+        logger.debug(`Extracting reply info from bot message: "${replyContent}"`);
         // Pattern: [emoji] [Platform] username: message
         // First try to extract platform (with optional emoji prefix)
         const platformMatch = replyContent.match(/(?:.*?)?\[(Discord|Twitch)\]\s+([^:]+):\s*(.*)/);
         if (platformMatch) {
           replyPlatform = platformMatch[1] as Platform;
           replyAuthor = platformMatch[2].trim();
-          replyContent = platformMatch[3] || replyContent;
+          replyContent = platformMatch[3] || '';
+          logger.debug(`Extracted platform reply: platform=${replyPlatform}, author=${replyAuthor}, content="${replyContent}"`);
         } else {
           // Fallback to original pattern without platform extraction
           const authorMatch = replyContent.match(/(?:^[^\[]*)?(?:\[[\w]+\]\s+)?([^:]+):\s*(.*)/);
           if (authorMatch) {
             replyAuthor = authorMatch[1].trim();
-            replyContent = authorMatch[2] || replyContent;
+            replyContent = authorMatch[2] || '';
+            logger.debug(`Extracted simple reply: author=${replyAuthor}, content="${replyContent}"`);
           }
         }
       }
       
-      replyTo = {
-        messageId: replyMsg.message_id.toString(),
-        author: replyAuthor,
-        content: replyContent,
-        platform: replyPlatform,
-      };
-      logger.info(`Telegram message ${msg.message_id} is a reply to ${replyMsg.message_id} (author: ${replyAuthor}${replyPlatform ? `, platform: ${replyPlatform}` : ''})`);
+      // Only set replyTo if we actually have content (not "[No content]")
+      // This prevents showing empty replies when replying to messages not in the bot's history
+      if (replyContent !== '[No content]') {
+        replyTo = {
+          messageId: replyMsg.message_id.toString(),
+          author: replyAuthor,
+          content: replyContent,
+          platform: replyPlatform,
+        };
+        logger.info(`Telegram message ${msg.message_id} is a reply to ${replyMsg.message_id} (author: ${replyAuthor}${replyPlatform ? `, platform: ${replyPlatform}` : ''})`);
+      } else {
+        logger.info(`Telegram message ${msg.message_id} is replying to message ${replyMsg.message_id} with no retrievable content, treating as regular message`);
+      }
+      }
+    }
+    
+    // Get channel name from thread ID
+    const threadId = msg.message_thread_id || undefined;
+    let channelName: string | undefined;
+    if (threadId) {
+      channelName = Object.keys(channelMappings).find(name => 
+        channelMappings[name].telegram === threadId.toString()
+      );
+    } else {
+      channelName = Object.keys(channelMappings).find(name => 
+        !channelMappings[name].telegram
+      );
     }
     
     return {
@@ -386,6 +633,8 @@ export class TelegramService implements PlatformService {
       attachments: attachments.length > 0 ? attachments : undefined,
       replyTo,
       raw: msg,
+      channelId: threadId?.toString(),
+      channelName: channelName,
     };
   }
 }

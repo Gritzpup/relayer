@@ -5,13 +5,16 @@ import { TwitchService } from '../services/twitch';
 import { MessageFormatter } from './formatter';
 import { MessageMapper } from './messageMapper';
 import { RateLimiter } from './rateLimit';
-import { config } from '../config';
+import { config, channelMappings } from '../config';
 import { logger, logError } from '../utils/logger';
+import { messageDb } from '../database/db';
+import { initializeRedis, closeRedis } from '../services/redis';
+import { redisEvents, DeletionEvent } from './redisEvents';
 
 export class RelayManager {
-  private services: Map<Platform, PlatformService> = new Map();
+  services: Map<Platform, PlatformService> = new Map(); // Made public for webhook access
+  messageMapper: MessageMapper; // Made public for webhook access
   private formatter: MessageFormatter;
-  private messageMapper: MessageMapper;
   private rateLimiter: RateLimiter;
   private messageHistory: string[] = [];
   private isRunning: boolean = false;
@@ -34,6 +37,15 @@ export class RelayManager {
 
     logger.info('Starting relay manager...');
     this.isRunning = true;
+
+    // Initialize Redis
+    initializeRedis();
+    
+    // Subscribe to deletion events from Redis
+    await redisEvents.subscribeToDeletions(async (event: DeletionEvent) => {
+      logger.info(`Processing deletion event from Redis: ${event.platform} message ${event.messageId}`);
+      await this.handleDeletionEvent(event);
+    });
 
     this.setupMessageHandlers();
 
@@ -58,6 +70,9 @@ export class RelayManager {
     logger.info('Stopping relay manager...');
     this.isRunning = false;
 
+    // Unsubscribe from Redis events
+    await redisEvents.unsubscribe();
+
     const disconnectionPromises = Array.from(this.services.values()).map(service =>
       service.disconnect().catch(error => {
         logError(error as Error, `Failed to disconnect ${service.platform}`);
@@ -65,6 +80,9 @@ export class RelayManager {
     );
 
     await Promise.all(disconnectionPromises);
+    
+    // Close Redis connections
+    await closeRedis();
     
     logger.info('Relay manager stopped successfully');
   }
@@ -77,6 +95,10 @@ export class RelayManager {
         } else {
           await this.handleMessage(message);
         }
+      });
+      
+      service.onDelete(async (platform: Platform, messageId: string) => {
+        await this.handleDeletion(platform, messageId);
       });
     });
   }
@@ -91,7 +113,7 @@ export class RelayManager {
       }
     }
     
-    const mappingId = this.messageMapper.createMapping(
+    const mappingId = await this.messageMapper.createMapping(
       message.platform,
       message.id,
       message.content,
@@ -101,6 +123,15 @@ export class RelayManager {
       message.replyTo?.author,
       message.replyTo?.platform
     );
+
+    // Update database with mapping ID for Telegram messages
+    if (message.platform === Platform.Telegram) {
+      const messageIdNum = parseInt(message.id);
+      if (!isNaN(messageIdNum)) {
+        logger.info(`Updating mapping_id for Telegram message ${messageIdNum} to ${mappingId}`);
+        await messageDb.updateMappingId(messageIdNum, mappingId);
+      }
+    }
 
     // Check if we should relay this message
     if (!this.formatter.shouldRelayMessage(message)) {
@@ -131,14 +162,14 @@ export class RelayManager {
     logger.info(`Handling edit for message ${message.originalMessageId} from ${message.platform}`);
 
     // Find the mapping for the original message
-    const mapping = this.messageMapper.getMappingByPlatformMessage(message.platform, message.originalMessageId);
+    const mapping = await this.messageMapper.getMappingByPlatformMessage(message.platform, message.originalMessageId);
     if (!mapping) {
       logger.warn(`No mapping found for edited message ${message.originalMessageId} from ${message.platform}`);
       return;
     }
 
     // Update the content in the mapping
-    this.messageMapper.updateMessageContent(message.platform, message.originalMessageId, message.content);
+    await this.messageMapper.updateMessageContent(message.platform, message.originalMessageId, message.content);
 
     // Get all platform messages for this mapping
     const platformMessages = mapping.platformMessages;
@@ -181,6 +212,76 @@ export class RelayManager {
     }
   }
 
+  private async handleDeletion(platform: Platform, messageId: string): Promise<void> {
+    logger.info(`Handling deletion for message ${messageId} from ${platform}`);
+
+    // Find the mapping for the deleted message
+    const mapping = await this.messageMapper.getMappingByPlatformMessage(platform, messageId);
+    if (!mapping) {
+      logger.warn(`No mapping found for deleted message ${messageId} from ${platform}`);
+      return;
+    }
+
+    // Publish deletion event to Redis for distributed handling
+    const deletionEvent: DeletionEvent = {
+      mappingId: mapping.id,
+      platform,
+      messageId,
+      timestamp: Date.now()
+    };
+    
+    await redisEvents.publishDeletion(deletionEvent);
+    logger.info(`Published deletion event for ${platform} message ${messageId}`);
+  }
+  
+  /**
+   * Handle deletion events from Redis pub/sub
+   */
+  private async handleDeletionEvent(event: DeletionEvent): Promise<void> {
+    const { mappingId, platform: sourcePlatform } = event;
+    
+    // Get the mapping
+    const mapping = await this.messageMapper.getMapping(mappingId);
+    if (!mapping) {
+      logger.warn(`No mapping found for deletion event ${mappingId}`);
+      return;
+    }
+
+    // Get all platform messages for this mapping
+    const platformMessages = mapping.platformMessages;
+    
+    // Delete the message on all other platforms
+    for (const [targetPlatform, targetMessageId] of Object.entries(platformMessages)) {
+      const targetPlatformEnum = targetPlatform as Platform;
+      if (targetPlatformEnum === sourcePlatform || !targetMessageId) continue; // Skip the source platform
+      
+      const service = this.services.get(targetPlatformEnum);
+      if (!service || !service.getStatus().connected) {
+        logger.warn(`Cannot delete message on ${targetPlatformEnum}: Not connected`);
+        continue;
+      }
+
+      try {
+        const success = await service.deleteMessage(targetMessageId as string);
+        if (success) {
+          logger.info(`Successfully deleted message ${targetMessageId} on ${targetPlatformEnum}`);
+        } else {
+          logger.warn(`Failed to delete message ${targetMessageId} on ${targetPlatformEnum}`);
+        }
+      } catch (error) {
+        logError(error as Error, `Failed to delete message on ${targetPlatformEnum}`);
+      }
+    }
+
+    // Remove the mapping from the MessageMapper
+    await this.messageMapper.removeMapping(mappingId);
+  }
+  
+  // Public method for webhook to call
+  public async handleMessageDeletion(platform: Platform, messageId: string): Promise<void> {
+    return this.handleDeletion(platform, messageId);
+  }
+
   private async relayToPlatform(message: RelayMessage, targetPlatform: Platform, mappingId: string): Promise<void> {
     const service = this.services.get(targetPlatform);
     if (!service) {
@@ -194,8 +295,44 @@ export class RelayManager {
       return;
     }
 
+    // Determine target channel based on channel mapping
+    let targetChannelId: string | undefined;
+    
+    // Twitch doesn't have multiple channels, so skip channel mapping for it
+    if (targetPlatform === Platform.Twitch) {
+      // Twitch gets all messages, no channel mapping needed
+      logger.info(`Routing message from ${message.platform}${message.channelName ? ` #${message.channelName}` : ''} → Twitch`);
+    } else if (message.channelName && channelMappings[message.channelName]) {
+      const mapping = channelMappings[message.channelName];
+      if (targetPlatform === Platform.Discord) {
+        targetChannelId = mapping.discord;
+      } else if (targetPlatform === Platform.Telegram && mapping.telegram) {
+        targetChannelId = mapping.telegram;
+      }
+      
+      if (!targetChannelId) {
+        logger.warn(`No channel mapping found for ${message.channelName} to ${targetPlatform}, skipping message`);
+        return;
+      }
+      logger.info(`Routing message from ${message.platform} #${message.channelName} → ${targetPlatform} #${Object.keys(channelMappings).find(name => 
+        (targetPlatform === Platform.Discord && channelMappings[name].discord === targetChannelId) ||
+        (targetPlatform === Platform.Telegram && channelMappings[name].telegram === targetChannelId)
+      ) || targetChannelId}`);
+    } else if (targetPlatform !== Platform.Twitch) {
+      // No channel mapping and not Twitch, skip
+      logger.warn(`No channel info for message to ${targetPlatform}, skipping`);
+      return;
+    }
+
     if (!this.rateLimiter.canSendMessage(targetPlatform)) {
       logger.warn(`Rate limit reached for ${targetPlatform}, message queued`);
+      return;
+    }
+
+    // Skip relaying empty messages (unless they have attachments)
+    if ((!message.content || message.content.trim() === '') && 
+        (!message.attachments || message.attachments.length === 0)) {
+      logger.info(`Skipping empty message from ${message.platform} by ${message.author} to ${targetPlatform}`);
       return;
     }
 
@@ -214,7 +351,7 @@ export class RelayManager {
       if (mappingId && message.replyTo) {
         logger.info(`REPLY LOOKUP: Checking for reply info for mapping ${mappingId} on ${targetPlatform}`);
         logger.info(`REPLY LOOKUP: Message replyTo data: ${JSON.stringify(message.replyTo)}`);
-        const replyData = this.messageMapper.getReplyToInfo(mappingId, targetPlatform);
+        const replyData = await this.messageMapper.getReplyToInfo(mappingId, targetPlatform);
         if (replyData) {
           replyToMessageId = replyData.messageId;
           // Update replyInfo with data from mapper if available
@@ -226,12 +363,12 @@ export class RelayManager {
           // Special case: When replying to a bot message, we might need to look up the platform message differently
           if (message.replyTo.platform && message.replyTo.messageId) {
             // Try to find the mapping that contains the original message
-            const originalMapping = this.messageMapper.findMappingIdByAuthorAndPlatform(
+            const originalMapping = await this.messageMapper.findMappingIdByAuthorAndPlatform(
               message.replyTo.author, 
               message.replyTo.platform
             );
             if (originalMapping) {
-              const mapping = this.messageMapper.getMapping(originalMapping);
+              const mapping = await this.messageMapper.getMapping(originalMapping);
               if (mapping && mapping.platformMessages[targetPlatform]) {
                 replyToMessageId = mapping.platformMessages[targetPlatform];
                 logger.info(`REPLY LOOKUP: Found bot message ID ${replyToMessageId} on ${targetPlatform} via original mapping`);
@@ -246,7 +383,6 @@ export class RelayManager {
       // 1. Target is Twitch (no native replies)
       // 2. We have reply info but no proper message ID (can't link as native reply)
       // 3. Source is Twitch (often can't be linked on other platforms)
-      const hasProperReply = replyToMessageId !== undefined && targetPlatform !== Platform.Twitch;
       const shouldShowReplyContext = (targetPlatform === Platform.Twitch) || 
                                      (replyInfo && !replyToMessageId) || 
                                      (message.platform === Platform.Twitch && message.replyTo);
@@ -274,14 +410,21 @@ export class RelayManager {
         if (attachments.length === 0) attachments = undefined;
       }
 
-      logger.info(`SENDING TO ${targetPlatform}: replyToMessageId=${replyToMessageId}, hasReplyInfo=${!!replyInfo}`);
-      const sentMessageId = await service.sendMessage(formattedContent, attachments, replyToMessageId);
+      logger.info(`SENDING TO ${targetPlatform}: channel=${targetChannelId}, replyToMessageId=${replyToMessageId}, hasReplyInfo=${!!replyInfo}`);
+      const sentMessageId = await service.sendMessage(formattedContent, attachments, replyToMessageId, targetChannelId);
       this.rateLimiter.recordMessage(targetPlatform, formattedContent, attachments);
       
       // Track the sent message ID in our mapping
       if (sentMessageId) {
-        this.messageMapper.addPlatformMessage(mappingId, targetPlatform, sentMessageId);
+        await this.messageMapper.addPlatformMessage(mappingId, targetPlatform, sentMessageId);
         logger.info(`MAPPING: Added ${targetPlatform} message ${sentMessageId} to mapping ${mappingId}`);
+        
+        // Also track in database
+        await messageDb.trackPlatformMessage({
+          mappingId,
+          platform: targetPlatform,
+          messageId: sentMessageId
+        });
       } else {
         logger.warn(`No message ID returned when sending to ${targetPlatform}`);
       }

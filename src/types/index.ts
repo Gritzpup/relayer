@@ -20,6 +20,8 @@ export interface RelayMessage {
   };
   isEdit?: boolean;
   originalMessageId?: string;
+  channelId?: string;
+  channelName?: string;
 }
 
 export interface Attachment {
@@ -47,13 +49,25 @@ export interface RateLimitInfo {
 }
 
 export type MessageHandler = (message: RelayMessage) => Promise<void>;
+export type DeleteHandler = (platform: Platform, messageId: string) => Promise<void>;
+
+export interface ChannelMapping {
+  discord: string;
+  telegram: string | null;
+}
+
+export interface ChannelMappings {
+  [channelName: string]: ChannelMapping;
+}
 
 export interface PlatformService {
   platform: Platform;
   connect(): Promise<void>;
   disconnect(): Promise<void>;
-  sendMessage(content: string, attachments?: Attachment[], replyToMessageId?: string): Promise<string | undefined>;
+  sendMessage(content: string, attachments?: Attachment[], replyToMessageId?: string, targetChannelId?: string): Promise<string | undefined>;
   editMessage(messageId: string, newContent: string): Promise<boolean>;
+  deleteMessage(messageId: string): Promise<boolean>;
   onMessage(handler: MessageHandler): void;
+  onDelete(handler: DeleteHandler): void;
   getStatus(): ServiceStatus;
 }

@@ -1,14 +1,14 @@
 import { Client, GatewayIntentBits, TextChannel, Message, PartialMessage, AttachmentBuilder, EmbedBuilder, Partials } from 'discord.js';
-import { config } from '../config';
-import { Platform, RelayMessage, MessageHandler, PlatformService, ServiceStatus, Attachment } from '../types';
+import { config, channelMappings } from '../config';
+import { Platform, RelayMessage, MessageHandler, DeleteHandler, PlatformService, ServiceStatus, Attachment } from '../types';
 import { logger, logPlatformMessage, logError } from '../utils/logger';
 import { ReconnectManager } from '../utils/reconnect';
 
 export class DiscordService implements PlatformService {
   platform = Platform.Discord;
   private client: Client;
-  private channel?: TextChannel;
   private messageHandler?: MessageHandler;
+  private deleteHandler?: DeleteHandler;
   private reconnectManager: ReconnectManager;
   private status: ServiceStatus = {
     platform: Platform.Discord,
@@ -44,15 +44,19 @@ export class DiscordService implements PlatformService {
     this.client.on('ready', () => {
       logger.info(`Discord bot logged in as ${this.client.user?.tag}`);
       this.status.connected = true;
-      this.initializeChannel();
     });
 
     this.client.on('messageCreate', async (message: Message) => {
       if (message.author.bot) return;
-      if (message.channel.id !== config.discord.channelId) return;
+      
+      // Check if this channel is in our mapping
+      const channelName = Object.keys(channelMappings).find(name => 
+        channelMappings[name].discord === message.channel.id
+      );
+      if (!channelName) return; // Not a mapped channel
 
       this.status.messagesReceived++;
-      logger.info(`Discord raw message content: "${message.content}"`);
+      logger.info(`Discord message in #${channelName}: "${message.content}"`);
       logPlatformMessage('Discord', 'in', message.content, message.author.username);
 
       if (this.messageHandler) {
@@ -90,9 +94,14 @@ export class DiscordService implements PlatformService {
       if (oldMessage.partial) oldMessage = await oldMessage.fetch();
       if (newMessage.partial) newMessage = await newMessage.fetch();
       
-      // Skip if not in our channel or from a bot
+      // Skip if from a bot
       if (newMessage.author?.bot) return;
-      if (newMessage.channel.id !== config.discord.channelId) return;
+      
+      // Check if this channel is in our mapping
+      const channelName = Object.keys(channelMappings).find(name => 
+        channelMappings[name].discord === newMessage.channel.id
+      );
+      if (!channelName) return; // Not a mapped channel
       
       // Skip if content hasn't changed (could be embed update, etc.)
       if (oldMessage.content === newMessage.content) return;
@@ -108,6 +117,39 @@ export class DiscordService implements PlatformService {
           await this.messageHandler(relayMessage);
         } catch (error) {
           logError(error as Error, 'Discord edit handler');
+        }
+      }
+    });
+
+    // Handle message deletions
+    this.client.on('messageDelete', async (message: Message | PartialMessage) => {
+      // Fetch full message if partial
+      if (message.partial) {
+        try {
+          message = await message.fetch();
+        } catch (error) {
+          // Message data not available anymore
+          logger.debug('Could not fetch partial deleted message');
+          return;
+        }
+      }
+      
+      // Skip if from a bot
+      if (message.author?.bot) return;
+      
+      // Check if this channel is in our mapping
+      const channelName = Object.keys(channelMappings).find(name => 
+        channelMappings[name].discord === message.channel.id
+      );
+      if (!channelName) return; // Not a mapped channel
+      
+      logger.info(`Discord message deleted: ${message.id} by ${message.author?.username}`);
+      
+      if (this.deleteHandler) {
+        try {
+          await this.deleteHandler(Platform.Discord, message.id);
+        } catch (error) {
+          logError(error as Error, 'Discord delete handler');
         }
       }
     });
@@ -128,17 +170,13 @@ export class DiscordService implements PlatformService {
     logger.info('Discord disconnected');
   }
 
-  private initializeChannel(): void {
-    const channel = this.client.channels.cache.get(config.discord.channelId);
+  async sendMessage(content: string, attachments?: Attachment[], replyToMessageId?: string, targetChannelId?: string): Promise<string | undefined> {
+    // Use targetChannelId if provided, otherwise fall back to default channel
+    const channelId = targetChannelId || config.discord.channelId;
+    const channel = this.client.channels.cache.get(channelId);
+    
     if (!channel || !channel.isTextBased()) {
-      throw new Error(`Discord channel ${config.discord.channelId} not found or not text-based`);
-    }
-    this.channel = channel as TextChannel;
-  }
-
-  async sendMessage(content: string, attachments?: Attachment[], replyToMessageId?: string): Promise<string | undefined> {
-    if (!this.channel) {
-      throw new Error('Discord channel not initialized');
+      throw new Error(`Discord channel ${channelId} not found or not text-based`);
     }
 
     const messageOptions: any = { content };
@@ -184,7 +222,7 @@ export class DiscordService implements PlatformService {
       }
     }
 
-    const sentMessage = await this.channel.send(messageOptions);
+    const sentMessage = await (channel as TextChannel).send(messageOptions);
     this.status.messagesSent++;
     logPlatformMessage('Discord', 'out', content);
     
@@ -192,24 +230,63 @@ export class DiscordService implements PlatformService {
   }
 
   async editMessage(messageId: string, newContent: string): Promise<boolean> {
-    if (!this.channel) {
-      logger.error('Discord channel not initialized for edit');
-      return false;
-    }
-
     try {
-      const message = await this.channel.messages.fetch(messageId);
-      await message.edit(newContent);
-      logger.info(`Discord message ${messageId} edited successfully`);
-      return true;
+      // Try to find the message in any of the mapped channels
+      for (const [channelName, mapping] of Object.entries(channelMappings)) {
+        const channel = this.client.channels.cache.get(mapping.discord);
+        if (!channel || !channel.isTextBased()) continue;
+        
+        try {
+          const message = await (channel as TextChannel).messages.fetch(messageId);
+          await message.edit(newContent);
+          logger.info(`Discord message ${messageId} edited successfully in #${channelName}`);
+          return true;
+        } catch (error) {
+          // Message not in this channel, try next
+          continue;
+        }
+      }
+      
+      logger.error(`Failed to find Discord message ${messageId} in any mapped channel`);
+      return false;
     } catch (error) {
       logger.error(`Failed to edit Discord message ${messageId}: ${error}`);
       return false;
     }
   }
 
+  async deleteMessage(messageId: string): Promise<boolean> {
+    try {
+      // Try to find the message in any of the mapped channels
+      for (const [channelName, mapping] of Object.entries(channelMappings)) {
+        const channel = this.client.channels.cache.get(mapping.discord);
+        if (!channel || !channel.isTextBased()) continue;
+        
+        try {
+          const message = await (channel as TextChannel).messages.fetch(messageId);
+          await message.delete();
+          logger.info(`Discord message ${messageId} deleted successfully from #${channelName}`);
+          return true;
+        } catch (error) {
+          // Message not in this channel, try next
+          continue;
+        }
+      }
+      
+      logger.error(`Failed to find Discord message ${messageId} in any mapped channel`);
+      return false;
+    } catch (error) {
+      logger.error(`Failed to delete Discord message ${messageId}: ${error}`);
+      return false;
+    }
+  }
+
   onMessage(handler: MessageHandler): void {
     this.messageHandler = handler;
+  }
+
+  onDelete(handler: DeleteHandler): void {
+    this.deleteHandler = handler;
   }
 
   getStatus(): ServiceStatus {
@@ -279,6 +356,11 @@ export class DiscordService implements PlatformService {
       }
     }
 
+    // Get channel name from mapping
+    const channelName = Object.keys(channelMappings).find(name => 
+      channelMappings[name].discord === message.channel.id
+    );
+    
     return {
       id: message.id,
       platform: Platform.Discord,
@@ -288,6 +370,8 @@ export class DiscordService implements PlatformService {
       attachments: attachments.length > 0 ? attachments : undefined,
       replyTo,
       raw: message,
+      channelId: message.channel.id,
+      channelName: channelName,
     };
   }
 

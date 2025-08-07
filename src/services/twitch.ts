@@ -1,6 +1,6 @@
 import * as tmi from 'tmi.js';
 import { config } from '../config';
-import { Platform, RelayMessage, MessageHandler, PlatformService, ServiceStatus, Attachment } from '../types';
+import { Platform, RelayMessage, MessageHandler, DeleteHandler, PlatformService, ServiceStatus, Attachment } from '../types';
 import { logger, logPlatformMessage, logError } from '../utils/logger';
 import { ReconnectManager } from '../utils/reconnect';
 import { TwitchAPI } from './twitchApi';
@@ -18,6 +18,7 @@ export class TwitchService implements PlatformService {
   platform = Platform.Twitch;
   private client: tmi.Client;
   private messageHandler?: MessageHandler;
+  private deleteHandler?: DeleteHandler;
   private reconnectManager: ReconnectManager;
   private isConnecting: boolean = false;
   private recentMessages: Map<string, RecentMessage> = new Map(); // Key: author (lowercase)
@@ -251,6 +252,7 @@ export class TwitchService implements PlatformService {
 
   async sendMessage(content: string, attachments?: Attachment[], _replyToMessageId?: string): Promise<string | undefined> {
     const channel = `#${config.twitch.channel}`;
+    const MAX_TWITCH_LENGTH = 500;
     
     let messageContent = content;
     
@@ -269,29 +271,69 @@ export class TwitchService implements PlatformService {
     // Note: Twitch doesn't support replies, so replyToMessageId is ignored
     // Reply formatting is handled by the formatter which adds @mentions
 
-    let messageId: string | undefined;
+    // Split long messages into multiple parts
+    const messageParts: string[] = [];
     
-    // Try to use the API if available
-    if (this.useApi && this.api) {
-      try {
-        messageId = await this.api.sendChatMessage(config.twitch.channel, messageContent);
-        if (messageId) {
-          logger.debug(`Sent message via Twitch API with ID: ${messageId}`);
-        }
-      } catch (error) {
-        logger.warn('Failed to send via API, falling back to TMI.js:', error);
-        // Fall back to TMI.js
-        await this.client.say(channel, messageContent);
-      }
+    if (messageContent.length <= MAX_TWITCH_LENGTH) {
+      messageParts.push(messageContent);
     } else {
-      // Use TMI.js
-      await this.client.say(channel, messageContent);
+      // Calculate how much space we need for suffixes/prefixes
+      const truncateSuffix = '... (truncated)';
+      const continuedPrefix = '(continued message) ';
+      
+      // First part
+      const firstPartMaxLength = MAX_TWITCH_LENGTH - truncateSuffix.length;
+      messageParts.push(messageContent.substring(0, firstPartMaxLength) + truncateSuffix);
+      
+      // Subsequent parts
+      let remainingContent = messageContent.substring(firstPartMaxLength);
+      while (remainingContent.length > 0) {
+        const continuedMaxLength = MAX_TWITCH_LENGTH - continuedPrefix.length;
+        const part = continuedPrefix + remainingContent.substring(0, continuedMaxLength);
+        messageParts.push(part);
+        remainingContent = remainingContent.substring(continuedMaxLength);
+      }
+    }
+
+    let firstMessageId: string | undefined;
+    
+    // Send all message parts
+    for (let i = 0; i < messageParts.length; i++) {
+      const part = messageParts[i];
+      let messageId: string | undefined;
+      
+      // Try to use the API if available
+      if (this.useApi && this.api) {
+        try {
+          messageId = await this.api.sendChatMessage(config.twitch.channel, part);
+          if (messageId) {
+            logger.debug(`Sent message part ${i + 1}/${messageParts.length} via Twitch API with ID: ${messageId}`);
+          }
+        } catch (error) {
+          logger.warn('Failed to send via API, falling back to TMI.js:', error);
+          // Fall back to TMI.js
+          await this.client.say(channel, part);
+        }
+      } else {
+        // Use TMI.js
+        await this.client.say(channel, part);
+      }
+      
+      // Store the first message ID to return
+      if (i === 0 && messageId) {
+        firstMessageId = messageId;
+      }
+      
+      this.status.messagesSent++;
+      logPlatformMessage('Twitch', 'out', part);
+      
+      // Add a small delay between messages to avoid rate limiting
+      if (i < messageParts.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
     }
     
-    this.status.messagesSent++;
-    logPlatformMessage('Twitch', 'out', messageContent);
-    
-    return messageId;
+    return firstMessageId;
   }
 
   async editMessage(_messageId: string, _newContent: string): Promise<boolean> {
@@ -301,8 +343,34 @@ export class TwitchService implements PlatformService {
     return false;
   }
 
+  async deleteMessage(messageId: string): Promise<boolean> {
+    const channel = config.twitch.channel;
+    
+    try {
+      // Twitch requires moderator permissions to delete messages
+      // Use the deletemessage method with the message ID
+      await this.client.deletemessage(channel, messageId);
+      logger.info(`Twitch message ${messageId} deleted successfully`);
+      return true;
+    } catch (error: any) {
+      const errorMsg = error.message || error.toString();
+      
+      // Check for specific error types
+      if (errorMsg.includes('unrecognized_cmd') || errorMsg.includes('No response')) {
+        logger.warn(`Cannot delete Twitch message ${messageId}: Bot needs moderator permissions in channel ${channel}`);
+      } else {
+        logger.error(`Failed to delete Twitch message ${messageId}: ${errorMsg}`);
+      }
+      return false;
+    }
+  }
+
   onMessage(handler: MessageHandler): void {
     this.messageHandler = handler;
+  }
+
+  onDelete(handler: DeleteHandler): void {
+    this.deleteHandler = handler;
   }
 
   getStatus(): ServiceStatus {
@@ -418,6 +486,7 @@ export class TwitchService implements PlatformService {
       timestamp,
       replyTo,
       raw: { tags, message },
+      channelName: 'general', // Twitch messages go to general channel
     };
   }
   

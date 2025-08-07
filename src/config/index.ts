@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import { ChannelMappings } from '../types';
 
 dotenv.config();
 
@@ -34,6 +35,7 @@ export interface Config {
     maxFiles: string;
     maxSize: string;
   };
+  channelMappings: ChannelMappings;
 }
 
 function getEnvVar(key: string, defaultValue?: string): string {
@@ -77,6 +79,38 @@ function getCustomEmojis(): Config['relay']['customEmojis'] | undefined {
   };
 }
 
+// Channel mappings between Discord and Telegram
+export const channelMappings: ChannelMappings = {
+  'vent': {
+    discord: '1401061935604174928',
+    telegram: '104'
+  },
+  'test': {
+    discord: '1402671254896644167',
+    telegram: '918'
+  },
+  'dev': {
+    discord: '1402671075816636546',
+    telegram: '774'
+  },
+  'music': {
+    discord: '1402670920136527902',
+    telegram: '453'
+  },
+  'art': {
+    discord: '1401392870929465384',
+    telegram: '432'
+  },
+  'pets': {
+    discord: '1402671738562674741',
+    telegram: '748'
+  },
+  'general': {
+    discord: '1397623339660607530',
+    telegram: null // General chat has no topic ID
+  }
+};
+
 export const config: Config = {
   discord: {
     token: getEnvVar('DISCORD_TOKEN'),
@@ -105,6 +139,7 @@ export const config: Config = {
     maxFiles: getEnvVar('LOG_MAX_FILES', '14d'),
     maxSize: getEnvVar('LOG_MAX_SIZE', '20m'),
   },
+  channelMappings,
 };
 
 export function validateConfig(): void {
