@@ -28,7 +28,8 @@ API_ID = os.getenv("TELEGRAM_API_ID")
 API_HASH = os.getenv("TELEGRAM_API_HASH")
 GROUP_ID = int(os.getenv("TELEGRAM_GROUP_ID", "0"))
 WEBHOOK_URL = "http://localhost:3000/api/deletion-webhook"
-DB_PATH = "../relay_messages.db"
+DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "relay_messages.db")
+logger.info(f"Using database path: {DB_PATH}")
 
 if not API_ID or not API_HASH:
     logger.error("TELEGRAM_API_ID and TELEGRAM_API_HASH must be set in .env file")
@@ -134,12 +135,22 @@ async def handle_deleted_messages(client: Client, messages):
         try:
             logger.info(f"Processing deletion of message {msg.id}")
             
-            # Get mapping ID (might have been updated since tracking)
+            # First check if message exists in database at all
             cursor.execute(
-                "SELECT mapping_id FROM message_tracking WHERE telegram_msg_id = ?",
+                "SELECT telegram_msg_id, mapping_id, platform FROM message_tracking WHERE telegram_msg_id = ?",
                 (msg.id,)
             )
             result = cursor.fetchone()
+            
+            logger.info(f"Database lookup for message {msg.id}: {result}")
+            
+            # Also check the message_mappings table directly
+            cursor.execute(
+                "SELECT id FROM message_mappings WHERE platform_messages LIKE ?",
+                (f'%"Telegram":"{msg.id}"%',)
+            )
+            mapping_result = cursor.fetchone()
+            logger.info(f"Direct mapping lookup for message {msg.id}: {mapping_result}")
             
             # Mark as deleted in database
             cursor.execute("""
@@ -148,15 +159,25 @@ async def handle_deleted_messages(client: Client, messages):
                 WHERE telegram_msg_id = ?
             """, (msg.id,))
             
-            if result and result[0]:
-                logger.info(f"Found mapping {result[0]} for deleted message {msg.id}")
+            # Determine the mapping_id from either source
+            mapping_id = None
+            if result and result[1]:  # result[1] is mapping_id from message_tracking
+                mapping_id = result[1]
+                logger.info(f"Found mapping {mapping_id} in message_tracking for deleted message {msg.id}")
+            elif mapping_result and mapping_result[0]:  # mapping_result[0] is id from message_mappings
+                mapping_id = mapping_result[0]
+                logger.info(f"Found mapping {mapping_id} in message_mappings for deleted message {msg.id}")
+            
+            if mapping_id:
                 # Notify main bot
                 async with aiohttp.ClientSession() as session:
                     try:
-                        async with session.post(WEBHOOK_URL, json={
+                        webhook_data = {
                             "telegram_msg_id": msg.id,
-                            "mapping_id": result[0]
-                        }) as resp:
+                            "mapping_id": mapping_id
+                        }
+                        logger.info(f"Sending webhook with data: {webhook_data}")
+                        async with session.post(WEBHOOK_URL, json=webhook_data) as resp:
                             if resp.status == 200:
                                 logger.info(f"Successfully notified main bot about deletion")
                             else:

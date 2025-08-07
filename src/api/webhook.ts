@@ -15,7 +15,8 @@ export function setRelayManager(manager: any) {
 
 router.post('/deletion-webhook', async (req, res) => {
   logger.info(`=== DELETION WEBHOOK RECEIVED ===`);
-  logger.info(`Request body:`, req.body);
+  logger.info(`Request body:`, JSON.stringify(req.body));
+  logger.info(`Headers:`, req.headers);
   
   const { telegram_msg_id, mapping_id } = req.body;
   
