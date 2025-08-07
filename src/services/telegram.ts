@@ -195,13 +195,25 @@ export class TelegramService implements PlatformService {
       
       // Get the topic/thread ID
       const threadId = msg.message_thread_id || undefined;
+      logger.debug(`Edit handler: threadId=${threadId}, message_id=${msg.message_id}`);
       
       // Find channel name based on thread ID
       let channelName: string | undefined;
       if (threadId) {
+        // Check if this is a reply (thread_id is a message ID, not a topic ID)
+        const threadIdStr = threadId.toString();
         channelName = Object.keys(channelMappings).find(name => 
-          channelMappings[name].telegram === threadId.toString()
+          channelMappings[name].telegram === threadIdStr
         );
+        
+        // If no mapping found and threadId looks like a message ID (numeric and large),
+        // this is likely a reply, so default to general channel
+        if (!channelName && /^\d+$/.test(threadIdStr) && parseInt(threadIdStr) > 1000) {
+          logger.debug(`Edit appears to be for a reply (thread_id=${threadId} looks like message ID), defaulting to #general`);
+          channelName = Object.keys(channelMappings).find(name => 
+            !channelMappings[name].telegram
+          ) || 'general';
+        }
       } else {
         channelName = Object.keys(channelMappings).find(name => 
           !channelMappings[name].telegram
@@ -209,7 +221,7 @@ export class TelegramService implements PlatformService {
       }
       
       if (!channelName) {
-        logger.debug(`No mapping found for Telegram topic, skipping edited message`);
+        logger.warn(`No mapping found for Telegram topic ${threadId}, skipping edited message ${msg.message_id}`);
         return;
       }
       
@@ -227,7 +239,7 @@ export class TelegramService implements PlatformService {
       const username = msg.from.username || msg.from.first_name || 'Unknown';
       const content = msg.text || msg.caption || '[Media]';
       
-      logger.info(`Telegram message edited: ${msg.message_id} - New: "${content}"`);
+      logger.info(`Telegram message edited: ${msg.message_id} in channel ${channelName} - New: "${content}"`);
       logPlatformMessage('Telegram', 'in', `(edited) ${content}`, username);
       
       if (this.messageHandler) {
