@@ -189,8 +189,25 @@ export class RelayManager {
       }
 
       try {
+        // Handle reply info for edits (especially important for Twitch)
+        let replyInfo: { author: string; content: string } | undefined;
+        if (message.replyTo) {
+          replyInfo = {
+            author: message.replyTo.author,
+            content: message.replyTo.content
+          };
+        }
+        
+        // Determine if we should show reply context (same logic as normal relay)
+        const shouldShowReplyContext = (targetPlatform === Platform.Twitch) || 
+                                      (replyInfo && targetPlatform === Platform.Discord) || 
+                                      (message.platform === Platform.Twitch && message.replyTo);
+        const formatterReplyInfo = shouldShowReplyContext ? replyInfo : undefined;
+        
         // Format the edited content for the target platform
-        const formattedContent = this.formatter.formatForPlatform(message, targetPlatform);
+        logger.info(`Formatting edit for ${targetPlatform}: isEdit=${message.isEdit}, hasReply=${!!message.replyTo}, showReplyContext=${shouldShowReplyContext}`);
+        const formattedContent = this.formatter.formatForPlatform(message, targetPlatform, formatterReplyInfo);
+        logger.info(`Formatted content for ${targetPlatform}: "${formattedContent}"`);
         
         // Check if target is Twitch (string comparison to avoid TS narrowing issues)
         if (targetPlatform.toString() === Platform.Twitch.toString()) {
