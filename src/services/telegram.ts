@@ -30,7 +30,7 @@ export class TelegramService implements PlatformService {
           keepAlive: true,
           keepAliveMsecs: 10000
         }
-      },
+      } as any,
       filepath: false // Disable automatic file downloads
     });
     

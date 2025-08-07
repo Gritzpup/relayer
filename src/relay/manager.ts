@@ -260,14 +260,19 @@ export class RelayManager {
   }
 
   private async handleDeletion(platform: Platform, messageId: string): Promise<void> {
-    logger.info(`Handling deletion for message ${messageId} from ${platform}`);
+    logger.info(`=== HANDLE DELETION CALLED ===`);
+    logger.info(`Platform: ${platform}, Message ID: ${messageId}`);
 
     // Find the mapping for the deleted message
     const mapping = await this.messageMapper.getMappingByPlatformMessage(platform, messageId);
     if (!mapping) {
       logger.warn(`No mapping found for deleted message ${messageId} from ${platform}`);
+      logger.warn(`This could mean the message was never relayed or mapping was lost`);
       return;
     }
+
+    logger.info(`Found mapping ${mapping.id} for deleted message`);
+    logger.info(`Platform messages in mapping:`, mapping.platformMessages);
 
     // Publish deletion event to Redis for distributed handling
     const deletionEvent: DeletionEvent = {
@@ -278,13 +283,16 @@ export class RelayManager {
     };
     
     await redisEvents.publishDeletion(deletionEvent);
-    logger.info(`Published deletion event for ${platform} message ${messageId}`);
+    logger.info(`Published deletion event for ${platform} message ${messageId} with mapping ${mapping.id}`);
   }
   
   /**
    * Handle deletion events from Redis pub/sub
    */
   private async handleDeletionEvent(event: DeletionEvent): Promise<void> {
+    logger.info(`=== HANDLE DELETION EVENT ===`);
+    logger.info(`Event:`, event);
+    
     const { mappingId, platform: sourcePlatform } = event;
     
     // Get the mapping
@@ -294,13 +302,19 @@ export class RelayManager {
       return;
     }
 
+    logger.info(`Found mapping for deletion:`, mapping);
+
     // Get all platform messages for this mapping
     const platformMessages = mapping.platformMessages;
+    logger.info(`Platform messages to delete:`, platformMessages);
     
     // Delete the message on all other platforms
     for (const [targetPlatform, targetMessageId] of Object.entries(platformMessages)) {
       const targetPlatformEnum = targetPlatform as Platform;
-      if (targetPlatformEnum === sourcePlatform || !targetMessageId) continue; // Skip the source platform
+      if (targetPlatformEnum === sourcePlatform || !targetMessageId) {
+        logger.info(`Skipping ${targetPlatform}: ${targetPlatformEnum === sourcePlatform ? 'source platform' : 'no message ID'}`);
+        continue;
+      }
       
       const service = this.services.get(targetPlatformEnum);
       if (!service || !service.getStatus().connected) {
@@ -308,20 +322,23 @@ export class RelayManager {
         continue;
       }
 
+      logger.info(`Attempting to delete message ${targetMessageId} on ${targetPlatformEnum}`);
       try {
         const success = await service.deleteMessage(targetMessageId as string);
         if (success) {
-          logger.info(`Successfully deleted message ${targetMessageId} on ${targetPlatformEnum}`);
+          logger.info(`✅ Successfully deleted message ${targetMessageId} on ${targetPlatformEnum}`);
         } else {
-          logger.warn(`Failed to delete message ${targetMessageId} on ${targetPlatformEnum}`);
+          logger.warn(`❌ Failed to delete message ${targetMessageId} on ${targetPlatformEnum}`);
         }
       } catch (error) {
+        logger.error(`❌ Error deleting message on ${targetPlatformEnum}:`, error);
         logError(error as Error, `Failed to delete message on ${targetPlatformEnum}`);
       }
     }
 
     // Remove the mapping from the MessageMapper
     await this.messageMapper.removeMapping(mappingId);
+    logger.info(`Removed mapping ${mappingId} from mapper`);
   }
   
   // Public method for webhook to call
@@ -359,7 +376,7 @@ export class RelayManager {
         targetChannelId = mapping.discord;
       } else if (targetPlatform === Platform.Telegram) {
         // For Telegram, null means general chat (no topic), which is valid
-        targetChannelId = mapping.telegram;
+        targetChannelId = mapping.telegram || undefined;
         // If targetChannelId is null/undefined but we have a mapping entry, it's the general chat
         if (targetChannelId === null && mapping.hasOwnProperty('telegram')) {
           targetChannelId = undefined; // This is valid for general chat

@@ -28,19 +28,25 @@ class RedisEventManager {
       await subClient.subscribe(this.DELETION_CHANNEL);
       
       subClient.on('message', async (channel, message) => {
+        logger.info(`=== REDIS MESSAGE RECEIVED ===`);
+        logger.info(`Channel: ${channel}, Raw message: ${message}`);
+        
         if (channel === this.DELETION_CHANNEL) {
           try {
             const event: DeletionEvent = JSON.parse(message);
-            logger.info(`Received deletion event: ${event.platform} message ${event.messageId}`);
+            logger.info(`Parsed deletion event:`, event);
+            logger.info(`Number of deletion handlers: ${this.deletionHandlers.length}`);
             
             // Call all handlers
             await Promise.all(
-              this.deletionHandlers.map(handler => 
-                handler(event).catch(err => 
-                  logger.error(`Deletion handler error:`, err)
-                )
-              )
+              this.deletionHandlers.map((handler, index) => {
+                logger.info(`Calling deletion handler ${index + 1}...`);
+                return handler(event).catch(err => 
+                  logger.error(`Deletion handler ${index + 1} error:`, err)
+                );
+              })
             );
+            logger.info(`All deletion handlers completed`);
           } catch (error) {
             logger.error('Failed to process deletion event:', error);
           }

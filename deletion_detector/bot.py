@@ -20,6 +20,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Suppress Pyrogram's verbose debug logs
+logging.getLogger("pyrogram").setLevel(logging.WARNING)
+
 # Configuration
 API_ID = os.getenv("TELEGRAM_API_ID")
 API_HASH = os.getenv("TELEGRAM_API_HASH")
@@ -199,7 +202,7 @@ async def periodic_check():
             """, (check_after, check_before))
             
             messages = cursor.fetchall()
-            logger.debug(f"Checking {len(messages)} messages for deletion")
+            logger.info(f"Periodic check: Checking {len(messages)} messages for deletion")
             
             for msg_id, chat_id in messages:
                 try:

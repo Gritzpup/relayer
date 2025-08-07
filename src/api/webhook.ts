@@ -46,7 +46,7 @@ router.post('/deletion-webhook', async (req, res) => {
     res.status(200).json({ success: true });
   } catch (error) {
     logger.error('Error in deletion webhook:', error);
-    res.status(500).json({ success: false, error: error.message || 'Internal server error' });
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Internal server error' });
   }
 });
 
