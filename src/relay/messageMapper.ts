@@ -338,16 +338,21 @@ export class MessageMapper {
   /**
    * Update message content (for edits)
    */
-  async updateMessageContent(platform: Platform, messageId: string, _newContent: string): Promise<void> {
+  async updateMessageContent(platform: Platform, messageId: string, newContent: string): Promise<void> {
     const mapping = await this.getMappingByPlatformMessage(platform, messageId);
     if (!mapping) {
       logger.warn(`No mapping found for ${platform} message ${messageId} to update`);
       return;
     }
 
-    // Update content in database - we'll need to add this method
-    // For now, log a warning
-    logger.warn(`Content update not yet implemented in database for ${platform}:${messageId}`);
+    // Update content in Redis
+    mapping.content = newContent;
+    await setMessageMapping(this.MAPPING_PREFIX + mapping.id, mapping, this.MAPPING_TTL);
+    
+    // Update content in database
+    await messageDb.updateContent(mapping.id, newContent);
+    
+    logger.info(`Updated content for ${platform}:${messageId} (mapping ${mapping.id})`);
   }
 
   /**
@@ -358,6 +363,25 @@ export class MessageMapper {
   } | undefined> {
     const mapping = await this.getMappingByPlatformMessage(platform, messageId);
     return mapping?.platformMessages;
+  }
+
+  /**
+   * Find all messages that reply to a specific mapping
+   */
+  async findRepliesTo(mappingId: string): Promise<MessageMapping[]> {
+    // Use the database method to find replies
+    const replies = await messageDb.findRepliesTo(mappingId);
+    
+    // Convert database format to MessageMapping format if needed
+    const mappedReplies: MessageMapping[] = [];
+    for (const reply of replies) {
+      if (reply) {
+        mappedReplies.push(reply as MessageMapping);
+      }
+    }
+    
+    logger.info(`Found ${mappedReplies.length} replies to mapping ${mappingId}`);
+    return mappedReplies;
   }
 
   /**

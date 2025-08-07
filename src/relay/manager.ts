@@ -171,6 +171,62 @@ export class RelayManager {
     // Update the content in the mapping
     await this.messageMapper.updateMessageContent(message.platform, message.originalMessageId, message.content);
 
+    // Find all messages that reply to this edited message
+    const replies = await this.messageMapper.findRepliesTo(mapping.id);
+    logger.info(`Found ${replies.length} replies to edited message ${mapping.id}`);
+    
+    // Handle replies in Twitch (need to delete and re-send with updated reply context)
+    for (const reply of replies) {
+      const twitchReplyId = reply.platformMessages[Platform.Twitch];
+      if (twitchReplyId) {
+        const twitchService = this.services.get(Platform.Twitch);
+        if (twitchService && twitchService.getStatus().connected) {
+          try {
+            logger.info(`Handling Twitch reply ${twitchReplyId} to edited message`);
+            
+            // Try to delete the old reply
+            const deleteSuccess = await twitchService.deleteMessage(twitchReplyId);
+            if (deleteSuccess) {
+              logger.info(`Deleted old Twitch reply ${twitchReplyId}`);
+              
+              // Re-create the reply message with updated context
+              const replyMessage: RelayMessage = {
+                id: reply.originalMessageId,
+                platform: reply.originalPlatform as Platform,
+                author: reply.author,
+                content: reply.content,
+                channelName: 'general', // Twitch only has general
+                timestamp: new Date(),
+                attachments: [],
+                replyTo: {
+                  author: message.author,
+                  content: message.content, // Use the new edited content
+                  platform: message.platform
+                }
+              };
+              
+              // Format the message with updated reply context
+              const formattedContent = this.formatter.formatForPlatform(replyMessage, Platform.Twitch, {
+                author: message.author,
+                content: message.content
+              });
+              
+              // Send the new reply
+              const newReplyId = await twitchService.sendMessage(formattedContent);
+              if (newReplyId) {
+                await this.messageMapper.updatePlatformMessage(reply.id, Platform.Twitch, newReplyId);
+                logger.info(`Re-sent Twitch reply with new ID ${newReplyId}`);
+              }
+            } else {
+              logger.warn(`Could not delete old Twitch reply ${twitchReplyId} - bot needs moderator permissions`);
+            }
+          } catch (error) {
+            logger.error(`Failed to handle Twitch reply to edited message:`, error);
+          }
+        }
+      }
+    }
+
     // Get all platform messages for this mapping
     const platformMessages = mapping.platformMessages;
     

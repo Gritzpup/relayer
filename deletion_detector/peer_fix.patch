@@ -1,0 +1,18 @@
+# Add this to your bot.py after the imports:
+
+# Ignore peer errors from other groups
+import warnings
+warnings.filterwarnings("ignore", message=".*Peer id invalid.*")
+
+# Also add this to the main() function after logger.info:
+    
+    # Suppress peer resolution errors from other groups
+    import sys
+    class PeerErrorFilter:
+        def write(self, message):
+            if "Peer id invalid: -1002170346561" not in message:
+                sys.__stderr__.write(message)
+    
+    # Only apply during production
+    if not os.getenv("DEBUG"):
+        sys.stderr = PeerErrorFilter()

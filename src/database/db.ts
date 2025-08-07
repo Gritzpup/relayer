@@ -281,6 +281,41 @@ export class MessageDatabase {
     }
   }
 
+  async updateContent(mappingId: string, newContent: string): Promise<void> {
+    try {
+      await this.db.run(
+        'UPDATE message_mappings SET content = ? WHERE id = ?',
+        [newContent, mappingId]
+      );
+      logger.info(`Updated content for mapping ${mappingId}`);
+    } catch (error) {
+      logger.error('Failed to update mapping content:', error);
+    }
+  }
+
+  async findRepliesTo(mappingId: string): Promise<any[]> {
+    try {
+      const replies = await this.db.all(
+        'SELECT * FROM message_mappings WHERE reply_to_mapping = ?',
+        [mappingId]
+      );
+      
+      // Get full mapping data for each reply
+      const fullReplies = [];
+      for (const reply of replies) {
+        const fullReply = await this.getMapping(reply.id);
+        if (fullReply) {
+          fullReplies.push(fullReply);
+        }
+      }
+      
+      return fullReplies;
+    } catch (error) {
+      logger.error('Failed to find replies to mapping:', error);
+      return [];
+    }
+  }
+
   // Cleanup old messages (5 days)
   async cleanupOldMessages(): Promise<number> {
     try {
