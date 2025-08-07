@@ -88,6 +88,11 @@ export class MessageFormatter {
       }
     }
 
+    // Add (edited) suffix for edited messages
+    if (message.isEdit) {
+      formattedContent = `${formattedContent} (edited)`;
+    }
+
     return this.truncateMessage(formattedContent, targetPlatform);
   }
 
