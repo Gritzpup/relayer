@@ -75,7 +75,7 @@ export class MessageFormatter {
     }
   }
 
-  formatForPlatform(message: RelayMessage, targetPlatform: Platform, replyInfo?: { author: string; content: string }): string {
+  formatForPlatform(message: RelayMessage, targetPlatform: Platform, replyInfo?: { author: string; content: string; platform?: Platform }): string {
     let formattedContent = message.content;
     let author = message.author;
 
@@ -115,7 +115,12 @@ export class MessageFormatter {
       const replyPreview = replyInfo.content.length > 50 
         ? replyInfo.content.substring(0, 50) + '...' 
         : replyInfo.content;
-      formattedContent = `↩️ Replying to ${replyInfo.author}: "${replyPreview}"\n\n${formattedContent}`;
+      // Include platform indicator for cross-platform replies
+      let replyAuthor = replyInfo.author;
+      if (replyInfo.platform && replyInfo.platform !== message.platform) {
+        replyAuthor = `[${replyInfo.platform}] ${replyInfo.author}`;
+      }
+      formattedContent = `↩️ Replying to ${replyAuthor}: "${replyPreview}"\n\n${formattedContent}`;
     } else if (replyInfo && targetPlatform === Platform.Discord) {
       // For Discord, only add reply context if we don't have a message reference
       // (handled in sendMessage with reply parameter)
@@ -123,12 +128,23 @@ export class MessageFormatter {
       const replyPreview = replyInfo.content.length > 50 
         ? replyInfo.content.substring(0, 50) + '...' 
         : replyInfo.content;
-      formattedContent = `↩️ Replying to ${replyInfo.author}: "${replyPreview}"\n\n${formattedContent}`;
+      // Include platform emoji and formatting for cross-platform replies
+      let formattedReplyAuthor = replyInfo.author;
+      if (replyInfo.platform) {
+        const replyIcon = this.getPlatformIcon(replyInfo.platform, targetPlatform);
+        formattedReplyAuthor = `${replyIcon} **[${replyInfo.platform}]** **${replyInfo.author}**`;
+      }
+      formattedContent = `↩️ Replying to ${formattedReplyAuthor}: "${replyPreview}"\n\n${formattedContent}`;
     } else if (replyInfo && targetPlatform === Platform.Telegram) {
       // For Telegram, if we don't have a message ID to reply to (native reply),
       // add simplified reply context (no message preview since it's visible above)
-      const escapedReplyAuthor = this.escapeHtml(replyInfo.author);
-      formattedContent = `↩️ Replying to ${escapedReplyAuthor}\n\n${formattedContent}`;
+      let formattedReplyAuthor = this.escapeHtml(replyInfo.author);
+      if (replyInfo.platform) {
+        const replyIcon = this.getPlatformIcon(replyInfo.platform, targetPlatform);
+        const escapedPlatform = this.escapeHtml(replyInfo.platform);
+        formattedReplyAuthor = `${replyIcon} <b>[${escapedPlatform}]</b> <b>${formattedReplyAuthor}</b>`;
+      }
+      formattedContent = `↩️ Replying to ${formattedReplyAuthor}\n\n${formattedContent}`;
     }
     // For Telegram with proper message ID, we'll use reply_to_message_id in sendMessage
 

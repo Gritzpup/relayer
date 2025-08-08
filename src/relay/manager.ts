@@ -489,11 +489,15 @@ export class RelayManager {
     try {
       // Get reply information if this is a reply
       let replyToMessageId: string | undefined;
-      let replyInfo: { author: string; content: string } | undefined;
+      let replyInfo: { author: string; content: string; platform?: Platform } | undefined;
       
       // Always populate reply info if message has reply data
       if (message.replyTo) {
-        replyInfo = { author: message.replyTo.author, content: message.replyTo.content };
+        replyInfo = { 
+          author: message.replyTo.author, 
+          content: message.replyTo.content,
+          platform: message.replyTo.platform
+        };
         logger.info(`REPLY INFO: Message from ${message.platform} has reply to ${message.replyTo.author}: "${message.replyTo.content?.substring(0, 30)}..."`);
       }
       
@@ -533,9 +537,11 @@ export class RelayManager {
       // 1. Target is Twitch (no native replies)
       // 2. We have reply info but no proper message ID (can't link as native reply)
       // 3. Source is Twitch (often can't be linked on other platforms)
+      // 4. Cross-platform relay: source and target are different platforms
       const shouldShowReplyContext = (targetPlatform === Platform.Twitch) || 
                                      (replyInfo && !replyToMessageId) || 
-                                     (message.platform === Platform.Twitch && message.replyTo);
+                                     (message.platform === Platform.Twitch && message.replyTo) ||
+                                     (replyInfo && message.platform !== targetPlatform);
       const formatterReplyInfo = shouldShowReplyContext ? replyInfo : undefined;
       
       if (message.platform === Platform.Twitch) {
