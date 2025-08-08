@@ -47,13 +47,22 @@ export class DiscordService implements PlatformService {
     });
 
     this.client.on('messageCreate', async (message: Message) => {
-      if (message.author.bot) return;
+      // Debug logging to see ALL messages
+      logger.debug(`[DEBUG] Discord message received: author="${message.author.username}" (bot=${message.author.bot}, id=${message.author.id}) channel=${message.channel.id} content="${message.content?.substring(0, 50)}..."`);
+      
+      if (message.author.bot) {
+        logger.debug(`[DEBUG] Skipping bot message from ${message.author.username}`);
+        return;
+      }
       
       // Check if this channel is in our mapping
       const channelName = Object.keys(channelMappings).find(name => 
         channelMappings[name].discord === message.channel.id
       );
-      if (!channelName) return; // Not a mapped channel
+      if (!channelName) {
+        logger.debug(`[DEBUG] Skipping message from unmapped channel ${message.channel.id}`);
+        return; // Not a mapped channel
+      }
 
       this.status.messagesReceived++;
       logger.info(`Discord message in #${channelName}: "${message.content}"`);

@@ -11,6 +11,21 @@ export class MessageFormatter {
       .replace(/'/g, '&#39;');
   }
 
+  private toUnicodeBold(text: string): string {
+    // Convert regular text to Unicode mathematical bold characters for Twitch
+    const boldMap: { [key: string]: string } = {
+      'A': '𝐀', 'B': '𝐁', 'C': '𝐂', 'D': '𝐃', 'E': '𝐄', 'F': '𝐅', 'G': '𝐆', 'H': '𝐇', 'I': '𝐈', 
+      'J': '𝐉', 'K': '𝐊', 'L': '𝐋', 'M': '𝐌', 'N': '𝐍', 'O': '𝐎', 'P': '𝐏', 'Q': '𝐐', 'R': '𝐑',
+      'S': '𝐒', 'T': '𝐓', 'U': '𝐔', 'V': '𝐕', 'W': '𝐖', 'X': '𝐗', 'Y': '𝐘', 'Z': '𝐙',
+      'a': '𝐚', 'b': '𝐛', 'c': '𝐜', 'd': '𝐝', 'e': '𝐞', 'f': '𝐟', 'g': '𝐠', 'h': '𝐡', 'i': '𝐢',
+      'j': '𝐣', 'k': '𝐤', 'l': '𝐥', 'm': '𝐦', 'n': '𝐧', 'o': '𝐨', 'p': '𝐩', 'q': '𝐪', 'r': '𝐫',
+      's': '𝐬', 't': '𝐭', 'u': '𝐮', 'v': '𝐯', 'w': '𝐰', 'x': '𝐱', 'y': '𝐲', 'z': '𝐳',
+      '0': '𝟎', '1': '𝟏', '2': '𝟐', '3': '𝟑', '4': '𝟒', '5': '𝟓', '6': '𝟔', '7': '𝟕', '8': '𝟖', '9': '𝟗'
+    };
+    
+    return text.split('').map(char => boldMap[char] || char).join('');
+  }
+
   private getPlatformIcon(platform: Platform, targetPlatform: Platform): string {
     // Check if we have custom emojis configured
     if (config.relay.customEmojis && targetPlatform === Platform.Discord) {
@@ -62,6 +77,20 @@ export class MessageFormatter {
       }
     }
     
+    // For Twitch target, use colored circles
+    if (targetPlatform === Platform.Twitch) {
+      switch (platform) {
+        case Platform.Discord:
+          return '🔴'; // Red circle for Discord
+        case Platform.Telegram:
+          return '🔵'; // Blue circle for Telegram
+        case Platform.Twitch:
+          return '🎮'; // Gaming controller for Twitch (shouldn't happen in relay)
+        default:
+          return '💬'; // Default chat bubble
+      }
+    }
+    
     // Fallback to colored circles for consistency
     switch (platform) {
       case Platform.Discord:
@@ -86,12 +115,16 @@ export class MessageFormatter {
     }
 
     if (config.relay.prefixEnabled) {
-      // Use emoji icons for Discord and Telegram, keep text for Twitch
+      // Use emoji icons for all platforms
+      const icon = this.getPlatformIcon(message.platform, targetPlatform);
+      
       if (targetPlatform === Platform.Twitch) {
-        const prefix = `[${message.platform}] ${author}`;
+        // Twitch: Use Unicode bold characters for platform tags and usernames
+        const boldPlatformTag = this.toUnicodeBold(`[${message.platform}]`);
+        const boldAuthor = this.toUnicodeBold(author);
+        const prefix = `${icon} ${boldPlatformTag} ${boldAuthor}`;
         formattedContent = `${prefix}: ${formattedContent}`;
       } else {
-        const icon = this.getPlatformIcon(message.platform, targetPlatform);
         // Add bold formatting for platform tags and usernames based on target platform
         let platformTag = `[${message.platform}]`;
         let formattedAuthor = author;
@@ -115,10 +148,12 @@ export class MessageFormatter {
       const replyPreview = replyInfo.content.length > 50 
         ? replyInfo.content.substring(0, 50) + '...' 
         : replyInfo.content;
-      // Include platform indicator for cross-platform replies
-      let replyAuthor = replyInfo.author;
-      if (replyInfo.platform && replyInfo.platform !== message.platform) {
-        replyAuthor = `[${replyInfo.platform}] ${replyInfo.author}`;
+      // Include platform emoji and indicator for cross-platform replies with Unicode bold
+      let replyAuthor = this.toUnicodeBold(replyInfo.author);
+      if (replyInfo.platform) {
+        const replyIcon = this.getPlatformIcon(replyInfo.platform, targetPlatform);
+        const boldPlatformTag = this.toUnicodeBold(`[${replyInfo.platform}]`);
+        replyAuthor = `${replyIcon} ${boldPlatformTag} ${replyAuthor}`;
       }
       formattedContent = `↩️ Replying to ${replyAuthor}: "${replyPreview}"\n\n${formattedContent}`;
     } else if (replyInfo && targetPlatform === Platform.Discord) {
