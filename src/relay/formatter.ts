@@ -2,6 +2,15 @@ import { Platform, RelayMessage, Attachment } from '../types';
 import { config } from '../config';
 
 export class MessageFormatter {
+  private escapeHtml(text: string): string {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
   private getPlatformIcon(platform: Platform, targetPlatform: Platform): string {
     // Check if we have custom emojis configured
     if (config.relay.customEmojis && targetPlatform === Platform.Discord) {
@@ -25,14 +34,42 @@ export class MessageFormatter {
       }
     }
     
-    // Fallback to emoji icons
+    // For Telegram target, use colored emoji indicators
+    if (targetPlatform === Platform.Telegram) {
+      switch (platform) {
+        case Platform.Discord:
+          return '🔵'; // Blue circle for Discord
+        case Platform.Twitch:
+          return '🔴'; // Red circle for Twitch
+        case Platform.Telegram:
+          return '✈️'; // Keep paper plane for Telegram (shouldn't happen in relay)
+        default:
+          return '💬'; // Default chat bubble
+      }
+    }
+    
+    // For Discord target, use colored circles for other platforms
+    if (targetPlatform === Platform.Discord) {
+      switch (platform) {
+        case Platform.Discord:
+          return '🎮'; // Gaming controller for Discord
+        case Platform.Telegram:
+          return '🔵'; // Blue circle for Telegram
+        case Platform.Twitch:
+          return '🔴'; // Red circle for Twitch
+        default:
+          return '💬'; // Default chat bubble
+      }
+    }
+    
+    // Fallback to colored circles for consistency
     switch (platform) {
       case Platform.Discord:
-        return '🎮'; // Gaming controller for Discord
+        return '🔵'; // Blue circle for Discord
       case Platform.Telegram:
-        return '✈️'; // Paper plane for Telegram
+        return '🟣'; // Purple circle for Telegram
       case Platform.Twitch:
-        return '📺'; // TV for Twitch
+        return '🔴'; // Red circle for Twitch
       default:
         return '💬'; // Default chat bubble
     }
@@ -40,15 +77,34 @@ export class MessageFormatter {
 
   formatForPlatform(message: RelayMessage, targetPlatform: Platform, replyInfo?: { author: string; content: string }): string {
     let formattedContent = message.content;
+    let author = message.author;
+
+    // Escape HTML for Telegram to prevent formatting issues
+    if (targetPlatform === Platform.Telegram) {
+      formattedContent = this.escapeHtml(formattedContent);
+      author = this.escapeHtml(author);
+    }
 
     if (config.relay.prefixEnabled) {
       // Use emoji icons for Discord and Telegram, keep text for Twitch
       if (targetPlatform === Platform.Twitch) {
-        const prefix = `[${message.platform}] ${message.author}`;
+        const prefix = `[${message.platform}] ${author}`;
         formattedContent = `${prefix}: ${formattedContent}`;
       } else {
         const icon = this.getPlatformIcon(message.platform, targetPlatform);
-        const prefix = `${icon} [${message.platform}] ${message.author}`;
+        // Add bold formatting for platform tags and usernames based on target platform
+        let platformTag = `[${message.platform}]`;
+        let formattedAuthor = author;
+        
+        if (targetPlatform === Platform.Discord) {
+          platformTag = `**[${message.platform}]**`; // Markdown bold for Discord
+          formattedAuthor = `**${author}**`; // Bold username for Discord
+        } else if (targetPlatform === Platform.Telegram) {
+          platformTag = `<b>[${message.platform}]</b>`; // HTML bold for Telegram
+          formattedAuthor = `<b>${author}</b>`; // Bold username for Telegram
+        }
+        
+        const prefix = `${icon} ${platformTag} ${formattedAuthor}`;
         formattedContent = `${prefix}: ${formattedContent}`;
       }
     }
@@ -71,7 +127,8 @@ export class MessageFormatter {
     } else if (replyInfo && targetPlatform === Platform.Telegram) {
       // For Telegram, if we don't have a message ID to reply to (native reply),
       // add simplified reply context (no message preview since it's visible above)
-      formattedContent = `↩️ Replying to ${replyInfo.author}\n\n${formattedContent}`;
+      const escapedReplyAuthor = this.escapeHtml(replyInfo.author);
+      formattedContent = `↩️ Replying to ${escapedReplyAuthor}\n\n${formattedContent}`;
     }
     // For Telegram with proper message ID, we'll use reply_to_message_id in sendMessage
 

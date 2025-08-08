@@ -472,7 +472,7 @@ export class TelegramService implements PlatformService {
 
     // Prepare options for reply and topic
     const messageOptions: any = {
-      parse_mode: undefined, // Don't use parse mode to avoid formatting issues
+      parse_mode: 'HTML' as const, // Enable HTML formatting for bold tags
       disable_web_page_preview: true
     };
     
@@ -611,6 +611,7 @@ export class TelegramService implements PlatformService {
       await this.bot.editMessageText(newContent, {
         chat_id: chatId,
         message_id: parseInt(messageId),
+        parse_mode: 'HTML', // Enable HTML formatting for bold tags
       });
       logger.info(`Telegram message ${messageId} edited successfully`);
       return true;
