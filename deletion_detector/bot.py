@@ -15,7 +15,7 @@ load_dotenv()
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # Set to DEBUG for more detailed logs
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -35,7 +35,8 @@ logger.info(f"Using database path: {DB_PATH}")
 if os.path.exists(DB_PATH):
     logger.info(f"Database file exists at {DB_PATH}")
     try:
-        test_db = sqlite3.connect(DB_PATH)
+        test_db = sqlite3.connect(DB_PATH, timeout=30.0)
+        test_db.execute("PRAGMA journal_mode=WAL")
         test_db.close()
         logger.info("Database is accessible")
     except Exception as e:
@@ -82,8 +83,14 @@ def safe_get_peer_type(peer_id: int):
 utils.get_peer_type = safe_get_peer_type
 
 def get_db():
-    """Get database connection"""
-    return sqlite3.connect(DB_PATH)
+    """Get database connection with proper timeout"""
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)  # 30 second timeout
+    # Try to enable WAL mode for better concurrency
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except:
+        pass  # Ignore if already set or not supported
+    return conn
 
 # Test if handlers are being registered
 logger.info(f"Registering handlers for GROUP_ID: {GROUP_ID}")
@@ -92,15 +99,18 @@ logger.info(f"Registering handlers for GROUP_ID: {GROUP_ID}")
 @app.on_message()
 async def debug_all_messages(client: Client, message: Message):
     """Debug handler to see all messages"""
-    logger.info(f"[DEBUG ALL] Got message {message.id} in chat {message.chat.id if message.chat else 'Unknown'}")
+    logger.debug(f"[DEBUG ALL] Got message {message.id} in chat {message.chat.id if message.chat else 'Unknown'}")
     if message.chat and message.chat.id == GROUP_ID:
-        logger.info(f"[DEBUG ALL] This message IS in our target group!")
+        logger.debug(f"[DEBUG ALL] This message IS in our target group!")
 
 # Handler for messages in our specific group
 @app.on_message(filters.chat(GROUP_ID))
 async def track_message(client: Client, message: Message):
     """Track all messages in the group"""
-    logger.info(f"[TRACKING] Received message {message.id} from {message.from_user.username if message.from_user else 'Unknown'} in chat {message.chat.id}")
+    username = message.from_user.username if message.from_user else 'Unknown'
+    user_id = message.from_user.id if message.from_user else 'Unknown'
+    logger.info(f"[TRACKING] Message {message.id} from @{username} (ID: {user_id}) in chat {message.chat.id}")
+    logger.info(f"[TRACKING] Content preview: {(message.text or message.caption or '[Media]')[:50]}...")
     
     # Track ALL messages
     # Wait a bit for the main bot to process messages and create mapping_id
@@ -149,15 +159,21 @@ logger.info(f"Registering deletion handler for GROUP_ID: {GROUP_ID}")
 @app.on_deleted_messages()
 async def handle_any_deleted_messages(client: Client, messages):
     """Debug handler for ANY deletion"""
-    logger.info(f"[DEBUG] ANY DELETION detected: {len(messages)} messages in chat {messages[0].chat.id if messages and messages[0].chat else 'Unknown'}")
+    logger.info(f"[DELETION EVENT] ANY deletion detected: {len(messages)} messages")
+    logger.info(f"[DELETION EVENT] Message IDs: {[msg.id for msg in messages]}")
+    logger.info(f"[DELETION EVENT] Chat ID: {messages[0].chat.id if messages and messages[0].chat else 'Unknown'}")
     for msg in messages:
         if msg.chat and msg.chat.id == GROUP_ID:
-            logger.info(f"[DEBUG] Deletion IS in our target group!")
+            logger.info(f"[DELETION EVENT] This deletion IS in our target group {GROUP_ID}!")
 
 @app.on_deleted_messages(filters.chat(GROUP_ID))
-async def handle_deleted_messages(client: Client, messages):
+async def handle_deleted_messages(client: Client, messages, is_periodic=False):
     """Handle message deletion events"""
-    logger.info(f"=== DELETION HANDLER TRIGGERED ===")
+    if not is_periodic:
+        logger.info(f"=== REAL-TIME DELETION DETECTED ===")
+        logger.info(f"Pyrogram real-time handler triggered!")
+    else:
+        logger.info(f"=== PERIODIC CHECK DELETION ===")
     logger.info(f"Detected {len(messages)} deleted messages")
     logger.info(f"Deleted message IDs: {[msg.id for msg in messages]}")
     
@@ -212,7 +228,9 @@ async def handle_deleted_messages(client: Client, messages):
                         logger.info(f"Sending webhook with data: {webhook_data}")
                         async with session.post(WEBHOOK_URL, json=webhook_data) as resp:
                             if resp.status == 200:
+                                response_data = await resp.json()
                                 logger.info(f"Successfully notified main bot about deletion")
+                                logger.info(f"Webhook response: {response_data}")
                             else:
                                 text = await resp.text()
                                 logger.error(f"Webhook returned status {resp.status}: {text}")
@@ -232,26 +250,35 @@ async def periodic_check():
     # Track when the bot started to avoid checking old messages
     bot_start_time = datetime.now()
     logger.info(f"Periodic check will only monitor messages after {bot_start_time}")
+    check_count = 0
     
     while True:
         await asyncio.sleep(30)  # Check every 30 seconds
+        check_count += 1
         
         db = get_db()
         cursor = db.cursor()
         
         try:
+            logger.debug(f"[PERIODIC CHECK #{check_count}] Starting periodic deletion check...")
             # Only check messages that were tracked after the bot started
             # AND are at least 10 seconds old (to avoid race conditions)
             check_after = bot_start_time.strftime('%Y-%m-%d %H:%M:%S')
             check_before = (datetime.now() - timedelta(seconds=10)).strftime('%Y-%m-%d %H:%M:%S')
             
+            # Only check messages that haven't been marked as deleted yet
             cursor.execute("""
-                SELECT telegram_msg_id, chat_id 
-                FROM message_tracking
-                WHERE timestamp > ? 
-                AND timestamp < ?
-                AND is_deleted = FALSE
-                AND platform = 'Telegram'
+                SELECT mt.telegram_msg_id, mt.chat_id 
+                FROM message_tracking mt
+                WHERE mt.timestamp > ? 
+                AND mt.timestamp < ?
+                AND mt.is_deleted = FALSE
+                AND mt.platform = 'Telegram'
+                AND NOT EXISTS (
+                    SELECT 1 FROM message_tracking mt2 
+                    WHERE mt2.telegram_msg_id = mt.telegram_msg_id 
+                    AND mt2.is_deleted = TRUE
+                )
                 LIMIT 50
             """, (check_after, check_before))
             
@@ -268,14 +295,14 @@ async def periodic_check():
                         class DeletedMsg:
                             def __init__(self, id):
                                 self.id = id
-                        await handle_deleted_messages(None, [DeletedMsg(msg_id)])
+                        await handle_deleted_messages(None, [DeletedMsg(msg_id)], is_periodic=True)
                 except Exception as e:
                     if "MESSAGE_ID_INVALID" in str(e) or "message not found" in str(e).lower():
                         logger.info(f"Message {msg_id} was deleted - marking in DB")
                         class DeletedMsg:
                             def __init__(self, id):
                                 self.id = id
-                        await handle_deleted_messages(None, [DeletedMsg(msg_id)])
+                        await handle_deleted_messages(None, [DeletedMsg(msg_id)], is_periodic=True)
                     else:
                         logger.debug(f"Error checking message {msg_id}: {e}")
         
@@ -312,10 +339,16 @@ async def main():
         await app.start()
         logger.info("Bot connected successfully")
         
-        # Get session info
+        # Get session info and verify authentication
         me = await app.get_me()
+        logger.info("="*60)
+        logger.info("SESSION VERIFICATION")
         logger.info(f"User account logged in as: {me.first_name} @{me.username} (ID: {me.id})")
+        logger.info(f"Phone number: {me.phone_number if hasattr(me, 'phone_number') else 'N/A'}")
+        logger.info(f"Is bot: {me.is_bot}")
+        logger.info(f"Is verified: {me.is_verified if hasattr(me, 'is_verified') else 'N/A'}")
         logger.info(f"This user account will track all messages including deletions")
+        logger.info("="*60)
         
         # Verify we can access the group and resolve peers
         try:
@@ -361,6 +394,15 @@ async def main():
         
         # Log that we're ready
         logger.info("Deletion detector is ready and monitoring for messages and deletions")
+        
+        # Log handler status
+        logger.info("="*60)
+        logger.info("HANDLER STATUS CHECK")
+        logger.info(f"Total handlers registered: {len(app.dispatcher.groups)}")
+        for group in app.dispatcher.groups:
+            if app.dispatcher.groups[group]:
+                logger.info(f"  Group {group}: {len(app.dispatcher.groups[group])} handlers")
+        logger.info("="*60)
         
         # Keep the bot running
         logger.info("Bot is now monitoring for messages and deletions...")

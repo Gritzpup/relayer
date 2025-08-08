@@ -33,8 +33,9 @@ export class MessageDatabase {
         driver: sqlite3.Database
       });
 
-      // Enable foreign keys
+      // Enable foreign keys and WAL mode for better concurrency
       await this.db.run('PRAGMA foreign_keys = ON');
+      await this.db.run('PRAGMA journal_mode = WAL');
 
       // Create tables from schema
       const schemaPath = join(__dirname, 'schema.sql');
