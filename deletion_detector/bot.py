@@ -20,8 +20,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Suppress Pyrogram's verbose debug logs
-logging.getLogger("pyrogram").setLevel(logging.WARNING)
+# Enable Pyrogram logs to see what's happening
+logging.getLogger("pyrogram").setLevel(logging.INFO)
 
 # Configuration
 API_ID = os.getenv("TELEGRAM_API_ID")
@@ -31,6 +31,18 @@ WEBHOOK_URL = "http://localhost:3000/api/deletion-webhook"
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "relay_messages.db")
 logger.info(f"Using database path: {DB_PATH}")
 
+# Check if database exists
+if os.path.exists(DB_PATH):
+    logger.info(f"Database file exists at {DB_PATH}")
+    try:
+        test_db = sqlite3.connect(DB_PATH)
+        test_db.close()
+        logger.info("Database is accessible")
+    except Exception as e:
+        logger.error(f"Cannot access database: {e}")
+else:
+    logger.error(f"Database file NOT FOUND at {DB_PATH}")
+
 if not API_ID or not API_HASH:
     logger.error("TELEGRAM_API_ID and TELEGRAM_API_HASH must be set in .env file")
     exit(1)
@@ -39,11 +51,11 @@ if GROUP_ID == 0:
     logger.error("TELEGRAM_GROUP_ID must be set in .env file")
     exit(1)
 
-# Initialize Pyrogram client
+# Initialize Pyrogram client as user account
 # Use absolute path for session to avoid issues with working directory
 session_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sessions")
 app = Client(
-    "deletion_detector",
+    "deletion_detector",  # Use existing session name
     api_id=API_ID,
     api_hash=API_HASH,
     workdir=session_path
@@ -73,17 +85,26 @@ def get_db():
     """Get database connection"""
     return sqlite3.connect(DB_PATH)
 
+# Test if handlers are being registered
+logger.info(f"Registering handlers for GROUP_ID: {GROUP_ID}")
+
+# Debug handler to catch ALL messages - register FIRST
+@app.on_message()
+async def debug_all_messages(client: Client, message: Message):
+    """Debug handler to see all messages"""
+    logger.info(f"[DEBUG ALL] Got message {message.id} in chat {message.chat.id if message.chat else 'Unknown'}")
+    if message.chat and message.chat.id == GROUP_ID:
+        logger.info(f"[DEBUG ALL] This message IS in our target group!")
+
+# Handler for messages in our specific group
 @app.on_message(filters.chat(GROUP_ID))
 async def track_message(client: Client, message: Message):
     """Track all messages in the group"""
-    # Skip bot messages except the relay bot
-    if message.from_user and message.from_user.is_bot:
-        if message.from_user.username != "GritzRelayerBot":
-            return
+    logger.info(f"[TRACKING] Received message {message.id} from {message.from_user.username if message.from_user else 'Unknown'} in chat {message.chat.id}")
     
-    # For user messages (not bot messages), wait a bit for the main bot to process it
-    if not (message.from_user and message.from_user.is_bot):
-        await asyncio.sleep(0.5)  # Give main bot time to create mapping_id
+    # Track ALL messages
+    # Wait a bit for the main bot to process messages and create mapping_id
+    await asyncio.sleep(0.5)
         
     db = get_db()
     cursor = db.cursor()
@@ -121,6 +142,18 @@ async def track_message(client: Client, message: Message):
     finally:
         db.close()
 
+# Handler for deleted messages
+logger.info(f"Registering deletion handler for GROUP_ID: {GROUP_ID}")
+
+# Test handler to catch ANY deletion
+@app.on_deleted_messages()
+async def handle_any_deleted_messages(client: Client, messages):
+    """Debug handler for ANY deletion"""
+    logger.info(f"[DEBUG] ANY DELETION detected: {len(messages)} messages in chat {messages[0].chat.id if messages and messages[0].chat else 'Unknown'}")
+    for msg in messages:
+        if msg.chat and msg.chat.id == GROUP_ID:
+            logger.info(f"[DEBUG] Deletion IS in our target group!")
+
 @app.on_deleted_messages(filters.chat(GROUP_ID))
 async def handle_deleted_messages(client: Client, messages):
     """Handle message deletion events"""
@@ -144,10 +177,10 @@ async def handle_deleted_messages(client: Client, messages):
             
             logger.info(f"Database lookup for message {msg.id}: {result}")
             
-            # Also check the message_mappings table directly
+            # Also check the platform_messages table
             cursor.execute(
-                "SELECT id FROM message_mappings WHERE platform_messages LIKE ?",
-                (f'%"Telegram":"{msg.id}"%',)
+                "SELECT mapping_id FROM platform_messages WHERE platform = 'Telegram' AND message_id = ?",
+                (str(msg.id),)
             )
             mapping_result = cursor.fetchone()
             logger.info(f"Direct mapping lookup for message {msg.id}: {mapping_result}")
@@ -253,7 +286,13 @@ async def periodic_check():
 
 async def main():
     """Main function to run the bot"""
+    logger.info("="*60)
     logger.info(f"Deletion detector bot started, monitoring group {GROUP_ID}")
+    logger.info(f"Monitoring as numeric group ID: {GROUP_ID}")
+    logger.info(f"Expected chat ID format: {GROUP_ID}")
+    logger.info(f"Webhook URL: {WEBHOOK_URL}")
+    logger.info(f"Database path: {DB_PATH}")
+    logger.info("="*60)
     
     # Set up error handler for peer resolution errors
     def handle_peer_error(loop, context):
@@ -269,8 +308,14 @@ async def main():
     
     try:
         # Start the Pyrogram client
+        logger.info("Starting Pyrogram client...")
         await app.start()
         logger.info("Bot connected successfully")
+        
+        # Get session info
+        me = await app.get_me()
+        logger.info(f"User account logged in as: {me.first_name} @{me.username} (ID: {me.id})")
+        logger.info(f"This user account will track all messages including deletions")
         
         # Verify we can access the group and resolve peers
         try:
@@ -288,6 +333,7 @@ async def main():
             chat = await app.get_chat(GROUP_ID)
             logger.info(f"Monitoring group: {chat.title}")
             logger.info(f"Group type: {chat.type}")
+            logger.info(f"Group chat ID: {chat.id}")
             logger.info(f"Members count: {chat.members_count}")
             
             # Try to resolve any other groups the bot is in
@@ -313,7 +359,11 @@ async def main():
         
         logger.info("Bot is running and monitoring for deletions...")
         
+        # Log that we're ready
+        logger.info("Deletion detector is ready and monitoring for messages and deletions")
+        
         # Keep the bot running
+        logger.info("Bot is now monitoring for messages and deletions...")
         await asyncio.Event().wait()
     except Exception as e:
         logger.error(f"Failed to start bot: {e}")

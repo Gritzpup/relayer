@@ -47,6 +47,15 @@ export class TwitchAPI {
   }
 
   /**
+   * Update the access token
+   */
+  updateToken(accessToken: string): void {
+    this.accessToken = accessToken;
+    this.api.defaults.headers['Authorization'] = `Bearer ${accessToken}`;
+    logger.info('Twitch API token updated');
+  }
+
+  /**
    * Validate the access token and get user info
    */
   async validateToken(): Promise<boolean> {

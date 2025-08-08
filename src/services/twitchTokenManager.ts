@@ -15,6 +15,7 @@ export class TwitchTokenManager {
   private clientId: string;
   private clientSecret: string;
   private tokenData: TokenData | null = null;
+  private onTokenRefreshCallback?: (accessToken: string) => void;
 
   constructor() {
     this.tokenFile = path.join(process.cwd(), 'twitch_token_data.json');
@@ -101,6 +102,11 @@ export class TwitchTokenManager {
       // Update .env file with new token
       await this.updateEnvFile(access_token);
       
+      // Notify callback if set
+      if (this.onTokenRefreshCallback) {
+        this.onTokenRefreshCallback(access_token);
+      }
+      
       logger.info(`Token refreshed successfully, expires in ${expires_in} seconds`);
     } catch (error) {
       logger.error('Failed to refresh token:', error);
@@ -124,6 +130,11 @@ export class TwitchTokenManager {
     } catch (error) {
       logger.error('Failed to update .env file:', error);
     }
+  }
+
+  // Set callback for when token is refreshed
+  onTokenRefresh(callback: (accessToken: string) => void): void {
+    this.onTokenRefreshCallback = callback;
   }
 
   // Schedule automatic token refresh

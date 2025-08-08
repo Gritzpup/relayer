@@ -243,7 +243,7 @@ export class TwitchService implements PlatformService {
         
         // Update API client if it exists
         if (this.api) {
-          this.api = new TwitchAPI(accessToken, config.twitch.clientId);
+          this.api.updateToken(accessToken);
         }
       } catch (tokenError) {
         logger.error('Failed to get Twitch access token:', tokenError);
@@ -263,6 +263,15 @@ export class TwitchService implements PlatformService {
     // Initialize token manager
     try {
       await twitchTokenManager.initialize();
+      
+      // Set up callback to update API token when refreshed
+      twitchTokenManager.onTokenRefresh((accessToken: string) => {
+        if (this.api) {
+          this.api.updateToken(accessToken);
+          logger.info('Twitch API token updated after refresh');
+        }
+      });
+      
       twitchTokenManager.startAutoRefresh();
       logger.info('Twitch token manager initialized');
     } catch (error) {
