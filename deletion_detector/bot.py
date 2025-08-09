@@ -180,6 +180,17 @@ async def handle_private(client: Client, message: Message):
     """Handle private messages to avoid unhandled updates"""
     logger.debug(f"Received private message from {message.from_user.first_name if message.from_user else 'Unknown'}")
 
+# Catch-all handler for other groups to prevent unhandled updates
+@app.on_message(~filters.chat(GROUP_ID) & filters.group)
+async def handle_other_groups(client: Client, message: Message):
+    """Handle messages from other groups to avoid peer resolution errors"""
+    pass  # Silently ignore messages from other groups
+
+@app.on_deleted_messages(~filters.chat(GROUP_ID))
+async def handle_other_deletions(client: Client, messages):
+    """Handle deletions from other groups to avoid peer resolution errors"""
+    pass  # Silently ignore deletions from other groups
+
 # Main function
 async def main():
     logger.info("="*60)
@@ -202,6 +213,18 @@ async def main():
         logger.info(f"Type: {chat.type}, Members: {chat.members_count}")
     except Exception as e:
         logger.error(f"Cannot access group: {e}")
+    
+    # Pre-resolve peers to avoid errors
+    logger.info("Pre-resolving peer information...")
+    try:
+        async for dialog in app.get_dialogs(limit=100):
+            try:
+                # Just accessing the dialog pre-resolves the peer
+                logger.debug(f"Resolved peer: {dialog.chat.title if dialog.chat.title else dialog.chat.id}")
+            except Exception as e:
+                logger.debug(f"Could not resolve peer: {e}")
+    except Exception as e:
+        logger.debug(f"Error pre-resolving peers: {e}")
     
     # Start periodic check
     asyncio.create_task(periodic_check())
