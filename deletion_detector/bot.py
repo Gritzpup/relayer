@@ -62,6 +62,12 @@ app = Client(
     workdir=session_path
 )
 
+# Simple test handler without any filters
+@app.on_message()
+async def test_any_message(client: Client, message: Message):
+    """Test handler to catch ANY message"""
+    logger.info(f"[TEST HANDLER] Got ANY message: {message.id} in chat {message.chat.id if message.chat else 'Unknown'}")
+
 # Track resolved peers
 resolved_peers = set()
 
@@ -259,8 +265,8 @@ async def periodic_check():
             for msg_id, chat_id in messages:
                 try:
                     # Try to get the message
-                    msgs = await app.get_messages(chat_id, msg_id)
-                    if msgs.empty:
+                    msg = await app.get_messages(chat_id, msg_id)
+                    if msg is None or (hasattr(msg, 'empty') and msg.empty) or (hasattr(msg, 'text') and msg.text is None and msg.media is None):
                         logger.info(f"Message {msg_id} not found - marking as deleted")
                         # Create a simple object with just the ID
                         class DeletedMsg:
@@ -378,10 +384,17 @@ async def main():
         # Log handler status
         logger.info("="*60)
         logger.info("HANDLER STATUS CHECK")
-        logger.info(f"Total handlers registered: {len(app.dispatcher.groups)}")
-        for group in app.dispatcher.groups:
-            if app.dispatcher.groups[group]:
-                logger.info(f"  Group {group}: {len(app.dispatcher.groups[group])} handlers")
+        logger.info(f"Dispatcher object: {app.dispatcher}")
+        logger.info(f"Dispatcher groups: {app.dispatcher.groups}")
+        
+        # Count all handlers
+        total_handlers = 0
+        for group_id, handlers in app.dispatcher.groups.items():
+            if handlers:
+                total_handlers += len(handlers)
+                logger.info(f"  Group {group_id}: {len(handlers)} handlers - {[h.__name__ for h in handlers]}")
+        
+        logger.info(f"Total handlers registered: {total_handlers}")
         logger.info("="*60)
         
         # Keep the bot running
