@@ -112,45 +112,19 @@ async def track_message(client: Client, message: Message):
     logger.info(f"[TRACKING] Message {message.id} from @{username} (ID: {user_id}) in chat {message.chat.id}")
     logger.info(f"[TRACKING] Content preview: {(message.text or message.caption or '[Media]')[:50]}...")
     
-    # Track ALL messages
-    # Wait a bit for the main bot to process messages and create mapping_id
-    await asyncio.sleep(0.5)
-        
-    db = get_db()
-    cursor = db.cursor()
+    # Track message in memory for deletion detection
+    # Store in a simple cache for periodic checking
+    if not hasattr(app, 'message_cache'):
+        app.message_cache = {}
     
-    try:
-        # Check if this message has been tracked by the main bot with a mapping_id
-        cursor.execute("""
-            SELECT mapping_id FROM message_tracking 
-            WHERE telegram_msg_id = ? AND platform = 'Telegram'
-        """, (message.id,))
-        
-        existing = cursor.fetchone()
-        
-        if existing and existing[0]:
-            # Message already tracked with mapping_id
-            logger.debug(f"Message {message.id} already tracked with mapping {existing[0]}")
-        else:
-            # Track it without mapping_id for now (main bot will update it later)
-            cursor.execute("""
-                INSERT OR IGNORE INTO message_tracking 
-                (telegram_msg_id, chat_id, user_id, username, content, platform)
-                VALUES (?, ?, ?, ?, ?, 'Telegram')
-            """, (
-                message.id,
-                message.chat.id,
-                message.from_user.id if message.from_user else None,
-                message.from_user.username if message.from_user else None,
-                message.text or message.caption or '[Media]'
-            ))
-            
-            db.commit()
-            logger.info(f"Tracked message {message.id} from {message.from_user.username if message.from_user else 'Unknown'} (waiting for mapping_id)")
-    except Exception as e:
-        logger.error(f"Error tracking message: {e}")
-    finally:
-        db.close()
+    app.message_cache[message.id] = {
+        'chat_id': message.chat.id,
+        'timestamp': datetime.now(),
+        'username': message.from_user.username if message.from_user else 'Unknown',
+        'content': (message.text or message.caption or '[Media]')[:50]
+    }
+    
+    logger.info(f"Cached message {message.id} for deletion tracking (cache size: {len(app.message_cache)})")
 
 # Handler for deleted messages
 logger.info(f"Registering deletion handler for GROUP_ID: {GROUP_ID}")
@@ -266,24 +240,21 @@ async def periodic_check():
             check_after = bot_start_time.strftime('%Y-%m-%d %H:%M:%S')
             check_before = (datetime.now() - timedelta(seconds=10)).strftime('%Y-%m-%d %H:%M:%S')
             
-            # Only check messages that haven't been marked as deleted yet
-            cursor.execute("""
-                SELECT mt.telegram_msg_id, mt.chat_id 
-                FROM message_tracking mt
-                WHERE mt.timestamp > ? 
-                AND mt.timestamp < ?
-                AND mt.is_deleted = FALSE
-                AND mt.platform = 'Telegram'
-                AND NOT EXISTS (
-                    SELECT 1 FROM message_tracking mt2 
-                    WHERE mt2.telegram_msg_id = mt.telegram_msg_id 
-                    AND mt2.is_deleted = TRUE
-                )
-                LIMIT 50
-            """, (check_after, check_before))
+            # Check messages from our in-memory cache
+            if not hasattr(app, 'message_cache'):
+                app.message_cache = {}
+                
+            messages_to_check = []
+            current_time = datetime.now()
             
-            messages = cursor.fetchall()
-            logger.info(f"Periodic check: Checking {len(messages)} messages for deletion")
+            # Only check messages older than 10 seconds to avoid race conditions
+            for msg_id, msg_data in list(app.message_cache.items()):
+                msg_age = (current_time - msg_data['timestamp']).total_seconds()
+                if msg_age > 10 and msg_age < 3600:  # Between 10 seconds and 1 hour old
+                    messages_to_check.append((msg_id, msg_data['chat_id']))
+            
+            logger.info(f"Periodic check: Checking {len(messages_to_check)} messages for deletion (cache has {len(app.message_cache)} total)")
+            messages = messages_to_check[:50]  # Limit to 50 at a time
             
             for msg_id, chat_id in messages:
                 try:
@@ -296,6 +267,9 @@ async def periodic_check():
                             def __init__(self, id):
                                 self.id = id
                         await handle_deleted_messages(None, [DeletedMsg(msg_id)], is_periodic=True)
+                        # Remove from cache
+                        if hasattr(app, 'message_cache') and msg_id in app.message_cache:
+                            del app.message_cache[msg_id]
                 except Exception as e:
                     if "MESSAGE_ID_INVALID" in str(e) or "message not found" in str(e).lower():
                         logger.info(f"Message {msg_id} was deleted - marking in DB")
@@ -303,6 +277,9 @@ async def periodic_check():
                             def __init__(self, id):
                                 self.id = id
                         await handle_deleted_messages(None, [DeletedMsg(msg_id)], is_periodic=True)
+                        # Remove from cache
+                        if hasattr(app, 'message_cache') and msg_id in app.message_cache:
+                            del app.message_cache[msg_id]
                     else:
                         logger.debug(f"Error checking message {msg_id}: {e}")
         
@@ -320,6 +297,9 @@ async def main():
     logger.info(f"Webhook URL: {WEBHOOK_URL}")
     logger.info(f"Database path: {DB_PATH}")
     logger.info("="*60)
+    
+    # Initialize message cache
+    app.message_cache = {}
     
     # Set up error handler for peer resolution errors
     def handle_peer_error(loop, context):
