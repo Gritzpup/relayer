@@ -23,7 +23,7 @@ async function main() {
     app.use(express.json());
     app.use('/api', webhookRouter);
     
-    const PORT = process.env.WEBHOOK_PORT || 3000;
+    const PORT = process.env.WEBHOOK_PORT || 4002;
     app.listen(PORT, () => {
       logger.info(`Webhook server listening on port ${PORT}`);
     });

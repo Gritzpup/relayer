@@ -46,7 +46,7 @@ Add these to your `.env` file:
 # Deletion detector
 TELEGRAM_API_ID=your_api_id_here
 TELEGRAM_API_HASH=your_api_hash_here
-WEBHOOK_PORT=3000  # Optional, defaults to 3000
+WEBHOOK_PORT=4002  # Optional, defaults to 4002
 ```
 
 ## Step 4: Initialize Database

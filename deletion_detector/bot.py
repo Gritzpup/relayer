@@ -27,7 +27,7 @@ logging.getLogger("pyrogram").setLevel(logging.INFO)
 API_ID = os.getenv("TELEGRAM_API_ID")
 API_HASH = os.getenv("TELEGRAM_API_HASH")
 GROUP_ID = int(os.getenv("TELEGRAM_GROUP_ID", "0"))
-WEBHOOK_URL = "http://localhost:3000/api/deletion-webhook"
+WEBHOOK_URL = "http://localhost:4002/api/deletion-webhook"
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "relay_messages.db")
 
 logger.info(f"Using database path: {DB_PATH}")
