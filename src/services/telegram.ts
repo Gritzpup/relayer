@@ -764,18 +764,20 @@ export class TelegramService implements PlatformService {
       // If replying to a bot message, extract the original author from the message content
       let replyPlatform: Platform | undefined;
       if (replyMsg.from?.is_bot && replyContent) {
-        logger.debug(`Extracting reply info from bot message: "${replyContent}"`);
+        logger.info(`REPLY EXTRACTION: Processing bot message reply: "${replyContent}"`);
         // Pattern: [emoji] [Platform] username: message
         // First try to extract platform (with optional emoji prefix)
-        const platformMatch = replyContent.match(/(?:.*?)?\[(Discord|Twitch)\]\s+([^:]+):\s*(.*)/);
+        // Updated regex to handle emoji prefixes (e.g., "🔴 [Twitch] Username: message")
+        const platformMatch = replyContent.match(/^(?:.*?)\[(Discord|Twitch|Telegram)\]\s+([^:]+):\s*(.*)/);
         if (platformMatch) {
           replyPlatform = platformMatch[1] as Platform;
           replyAuthor = platformMatch[2].trim();
           replyContent = platformMatch[3] || '';
-          logger.debug(`Extracted platform reply: platform=${replyPlatform}, author=${replyAuthor}, content="${replyContent}"`);
+          logger.info(`REPLY EXTRACTION: Successfully extracted - platform=${replyPlatform}, author=${replyAuthor}, content="${replyContent}"`);
         } else {
           // Fallback to original pattern without platform extraction
-          const authorMatch = replyContent.match(/(?:^[^\[]*)?(?:\[[\w]+\]\s+)?([^:]+):\s*(.*)/);
+          // This handles cases where platform tags are missing or in different formats
+          const authorMatch = replyContent.match(/^(?:[^\s]+\s+)?([^:]+):\s*(.*)/);
           if (authorMatch) {
             replyAuthor = authorMatch[1].trim();
             replyContent = authorMatch[2] || '';
