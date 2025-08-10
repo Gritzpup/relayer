@@ -252,7 +252,7 @@ export class MessageFormatter {
     const maxLengths: Record<Platform, number> = {
       [Platform.Discord]: 2000,
       [Platform.Telegram]: 4096,
-      [Platform.Twitch]: 500,
+      [Platform.Twitch]: 10000, // Twitch service handles splitting, so we allow longer messages
     };
 
     const maxLength = maxLengths[platform];

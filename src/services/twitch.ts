@@ -339,15 +339,13 @@ export class TwitchService implements PlatformService {
       messageParts.push(messageContent);
     } else {
       // Calculate how much space we need for suffixes/prefixes
-      const truncateSuffix = '... (truncated)';
-      const continuedPrefix = '(continued message) ';
+      const continuedPrefix = '(continued) ';
       
-      // First part
-      const firstPartMaxLength = MAX_TWITCH_LENGTH - truncateSuffix.length;
-      messageParts.push(messageContent.substring(0, firstPartMaxLength) + truncateSuffix);
+      // First part - just cut at max length, no suffix needed since we're sending the rest
+      messageParts.push(messageContent.substring(0, MAX_TWITCH_LENGTH));
       
       // Subsequent parts
-      let remainingContent = messageContent.substring(firstPartMaxLength);
+      let remainingContent = messageContent.substring(MAX_TWITCH_LENGTH);
       while (remainingContent.length > 0) {
         const continuedMaxLength = MAX_TWITCH_LENGTH - continuedPrefix.length;
         const part = continuedPrefix + remainingContent.substring(0, continuedMaxLength);
