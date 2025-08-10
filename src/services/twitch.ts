@@ -502,16 +502,21 @@ export class TwitchService implements PlatformService {
         for (const [key, msg] of this.recentMessages.entries()) {
           // Skip if it's too old
           const timeDiff = currentTime - msg.timestamp.getTime();
-          if (timeDiff > 5 * 60 * 1000) continue; // Skip messages older than 5 minutes
+          if (timeDiff > 5 * 60 * 1000) {
+            logger.info(`Skipping old message from ${msg.author} (${timeDiff/1000}s old)`);
+            continue;
+          }
           
           // Check if this message is from another platform
-          logger.debug(`Checking message: id=${msg.id}, platform=${msg.platform}, author=${msg.author}`);
+          logger.info(`REPLY CHECK: Checking message: id=${msg.id}, platform=${msg.platform}, author=${msg.author}, hasValidPlatform=${!!msg.platform}`);
           if (msg.platform && msg.platform !== Platform.Twitch) {
             // Update most recent if this is newer
             if (!mostRecentRelayed || msg.timestamp > mostRecentRelayed.timestamp) {
               mostRecentRelayed = msg;
-              logger.debug(`Found relayed message from ${msg.author} (${msg.platform})`);
+              logger.info(`REPLY CHECK: Found relayed message from ${msg.author} (${msg.platform})`);
             }
+          } else {
+            logger.info(`REPLY CHECK: Skipping - platform=${msg.platform}, isTwitch=${msg.platform === Platform.Twitch}`);
           }
         }
         
@@ -538,9 +543,10 @@ export class TwitchService implements PlatformService {
             if (timeDiff > 5 * 60 * 1000) continue; // Skip messages older than 5 minutes
             
             // Check if this message author matches (case insensitive)
+            logger.info(`DIRECT REPLY CHECK: Comparing author "${msg.author.toLowerCase()}" with mentioned "${mentionedUser}"`);
             if (msg.author.toLowerCase() === mentionedUser) {
               recentMessage = msg;
-              logger.info(`Found message from ${msg.author} (matched ${mentionedUser}) with key ${key}, platform=${msg.platform || 'Twitch'}`);
+              logger.info(`DIRECT REPLY: Found message from ${msg.author} (matched ${mentionedUser}) with key ${key}, platform=${msg.platform || 'Twitch'}`);
               break;
             }
           }

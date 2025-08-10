@@ -145,9 +145,6 @@ export class MessageFormatter {
     // Add reply formatting based on target platform
     if (replyInfo && targetPlatform === Platform.Twitch) {
       // For Twitch, add reply context since it doesn't support real replies
-      const replyPreview = replyInfo.content.length > 50 
-        ? replyInfo.content.substring(0, 50) + '...' 
-        : replyInfo.content;
       // Include platform emoji and indicator for cross-platform replies with Unicode bold
       let replyAuthor = this.toUnicodeBold(replyInfo.author);
       if (replyInfo.platform) {
@@ -155,13 +152,10 @@ export class MessageFormatter {
         const boldPlatformTag = this.toUnicodeBold(`[${replyInfo.platform}]`);
         replyAuthor = `${replyIcon} ${boldPlatformTag} ${replyAuthor}`;
       }
-      formattedContent = `↩️ Replying to ${replyAuthor}: "${replyPreview}"\n\n${formattedContent}`;
+      formattedContent = `↩️ Replying to ${replyAuthor}\n\n${formattedContent}`;
     } else if (replyInfo && targetPlatform === Platform.Discord) {
       // For Discord, add reply context when we have replyInfo
       // This happens when source is Twitch or when we can't link as native reply
-      const replyPreview = replyInfo.content.length > 50 
-        ? replyInfo.content.substring(0, 50) + '...' 
-        : replyInfo.content;
       // Include platform emoji and formatting for cross-platform replies
       let formattedReplyAuthor = replyInfo.author;
       if (replyInfo.platform) {
@@ -171,13 +165,10 @@ export class MessageFormatter {
         // If no platform specified, but the author is being replied to, show just bold name
         formattedReplyAuthor = `**${replyInfo.author}**`;
       }
-      formattedContent = `↩️ Replying to ${formattedReplyAuthor}: "${replyPreview}"\n\n${formattedContent}`;
+      formattedContent = `↩️ Replying to ${formattedReplyAuthor}\n\n${formattedContent}`;
     } else if (replyInfo && targetPlatform === Platform.Telegram) {
       // For Telegram, add reply context when we have replyInfo
       // This happens when source is Twitch or when we can't link as native reply
-      const replyPreview = replyInfo.content.length > 50 
-        ? replyInfo.content.substring(0, 50) + '...' 
-        : replyInfo.content;
       let formattedReplyAuthor = this.escapeHtml(replyInfo.author);
       if (replyInfo.platform) {
         const replyIcon = this.getPlatformIcon(replyInfo.platform, targetPlatform);
@@ -187,7 +178,7 @@ export class MessageFormatter {
         // If no platform specified, but the author is being replied to, show just bold name
         formattedReplyAuthor = `<b>${formattedReplyAuthor}</b>`;
       }
-      formattedContent = `↩️ Replying to ${formattedReplyAuthor}: "${replyPreview}"\n\n${formattedContent}`;
+      formattedContent = `↩️ Replying to ${formattedReplyAuthor}\n\n${formattedContent}`;
     }
     // For Telegram with proper message ID, we'll use reply_to_message_id in sendMessage
 
