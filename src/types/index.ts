@@ -64,7 +64,7 @@ export interface PlatformService {
   platform: Platform;
   connect(): Promise<void>;
   disconnect(): Promise<void>;
-  sendMessage(content: string, attachments?: Attachment[], replyToMessageId?: string, targetChannelId?: string): Promise<string | undefined>;
+  sendMessage(content: string, attachments?: Attachment[], replyToMessageId?: string, targetChannelId?: string, originalMessage?: RelayMessage): Promise<string | undefined>;
   editMessage(messageId: string, newContent: string): Promise<boolean>;
   deleteMessage(messageId: string): Promise<boolean>;
   onMessage(handler: MessageHandler): void;

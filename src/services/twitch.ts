@@ -103,11 +103,6 @@ export class TwitchService implements PlatformService {
       logger.info(`TWITCH MSG: Channel: ${channel}, User: ${tags.username}, Self: ${self}, Message: "${message.substring(0, 50)}..."`);
       logger.info(`TWITCH MSG: Current stored messages: ${this.recentMessages.size}`);
       
-      if (self) {
-        logger.debug('Skipping self message');
-        return;
-      }
-      
       if (channel !== `#${config.twitch.channel}`) {
         logger.debug(`Skipping message from wrong channel: ${channel} (expected #${config.twitch.channel})`);
         return;
@@ -116,7 +111,7 @@ export class TwitchService implements PlatformService {
       // Check if this is a relayed message (has platform prefix with or without emoji)
       // Pattern handles Unicode bold formatting used by the bot
       // Example: "🔵 [𝗧𝗲𝗹𝗲𝗴𝗿𝗮𝗺] 𝗚𝗿𝗶𝘁𝘇𝗽𝘂𝗽: test"
-      const relayPattern = /^[🟦🔵💙🟢💚🔴❤️]\s*\[([𝐀-𝐙𝐚-𝐳𝟎-𝟗]+)\]\s*([𝐀-𝐙𝐚-𝐳𝟎-𝟗\s_-]+):\s*(.*)$/;
+      const relayPattern = /^[🟦🔵💙🟢💚🔴❤️]\s*\[([^\]]+)\]\s*([^:]+):\s*(.*)$/;
       const relayMatch = message.match(relayPattern);
       
       logger.info(`RELAY CHECK: Testing message: "${message}"`);
@@ -149,6 +144,12 @@ export class TwitchService implements PlatformService {
         logger.info(`RELAY TRACKING: Stored message from ${originalAuthor} with content: "${originalContent.substring(0, 30)}..."`);
         logger.info(`RELAY TRACKING: Recent messages now has ${this.recentMessages.size} entries`);
         return; // Skip relaying it back
+      }
+      
+      // Skip self messages (but only after checking for relayed messages)
+      if (self) {
+        logger.debug('Skipping self message');
+        return;
       }
       
       // Skip messages from the bot account (backup check) - but only after checking for relayed messages
@@ -310,7 +311,7 @@ export class TwitchService implements PlatformService {
     logger.info('Twitch disconnected');
   }
 
-  async sendMessage(content: string, attachments?: Attachment[], _replyToMessageId?: string): Promise<string | undefined> {
+  async sendMessage(content: string, attachments?: Attachment[], _replyToMessageId?: string, _channelId?: string, originalMessage?: RelayMessage): Promise<string | undefined> {
     const channel = `#${config.twitch.channel}`;
     const MAX_TWITCH_LENGTH = 500;
     
@@ -382,6 +383,20 @@ export class TwitchService implements PlatformService {
       // Store the first message ID to return
       if (i === 0 && messageId) {
         firstMessageId = messageId;
+        
+        // If this is a relayed message from another platform, store the original author info
+        if (originalMessage && originalMessage.platform !== Platform.Twitch) {
+          logger.info(`TWITCH SEND: Storing relayed message from ${originalMessage.author} (${originalMessage.platform}) with ID ${messageId}`);
+          
+          // Store with the original author's name for reply detection
+          this.storeRecentMessage(
+            messageId,
+            originalMessage.author,
+            originalMessage.content,
+            new Date(),
+            originalMessage.platform
+          );
+        }
       }
       
       this.status.messagesSent++;
@@ -489,12 +504,13 @@ export class TwitchService implements PlatformService {
           const timeDiff = currentTime - msg.timestamp.getTime();
           if (timeDiff > 5 * 60 * 1000) continue; // Skip messages older than 5 minutes
           
-          // Check if this message ID indicates it's from another platform
-          // Relayed messages have IDs like "Discord-123456" or "Telegram-123456"
-          if (msg.id.startsWith('Discord-') || msg.id.startsWith('Telegram-')) {
+          // Check if this message is from another platform
+          logger.debug(`Checking message: id=${msg.id}, platform=${msg.platform}, author=${msg.author}`);
+          if (msg.platform && msg.platform !== Platform.Twitch) {
             // Update most recent if this is newer
             if (!mostRecentRelayed || msg.timestamp > mostRecentRelayed.timestamp) {
               mostRecentRelayed = msg;
+              logger.debug(`Found relayed message from ${msg.author} (${msg.platform})`);
             }
           }
         }
@@ -509,9 +525,11 @@ export class TwitchService implements PlatformService {
         // Look for recent message from mentioned user
         recentMessage = this.recentMessages.get(mentionedUser);
         
-        // If not found directly, search for relayed messages with this author
-        if (!recentMessage) {
-          logger.debug(`No direct message found from ${mentionedUser}, searching relayed messages`);
+        if (recentMessage) {
+          logger.info(`Found direct message from ${mentionedUser}`);
+        } else {
+          // If not found directly, search all messages case-insensitively
+          logger.debug(`No direct message found from ${mentionedUser}, searching all messages`);
           
           // Search through all recent messages
           for (const [key, msg] of this.recentMessages.entries()) {
@@ -522,7 +540,7 @@ export class TwitchService implements PlatformService {
             // Check if this message author matches (case insensitive)
             if (msg.author.toLowerCase() === mentionedUser) {
               recentMessage = msg;
-              logger.debug(`Found relayed message from ${mentionedUser} with key ${key}`);
+              logger.info(`Found message from ${msg.author} (matched ${mentionedUser}) with key ${key}, platform=${msg.platform || 'Twitch'}`);
               break;
             }
           }

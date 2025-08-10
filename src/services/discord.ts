@@ -179,7 +179,7 @@ export class DiscordService implements PlatformService {
     logger.info('Discord disconnected');
   }
 
-  async sendMessage(content: string, attachments?: Attachment[], replyToMessageId?: string, targetChannelId?: string): Promise<string | undefined> {
+  async sendMessage(content: string, attachments?: Attachment[], replyToMessageId?: string, targetChannelId?: string, _originalMessage?: RelayMessage): Promise<string | undefined> {
     // Use targetChannelId if provided, otherwise fall back to default channel
     const channelId = targetChannelId || config.discord.channelId;
     const channel = this.client.channels.cache.get(channelId);

@@ -464,7 +464,7 @@ export class TelegramService implements PlatformService {
     logger.info('Telegram disconnected');
   }
 
-  async sendMessage(content: string, attachments?: Attachment[], replyToMessageId?: string, targetChannelId?: string): Promise<string | undefined> {
+  async sendMessage(content: string, attachments?: Attachment[], replyToMessageId?: string, targetChannelId?: string, _originalMessage?: RelayMessage): Promise<string | undefined> {
     const chatId = config.telegram.groupId;
     let messageId: string | undefined;
     let retryCount = 0;

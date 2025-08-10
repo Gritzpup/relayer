@@ -567,7 +567,7 @@ export class RelayManager {
       }
 
       logger.info(`SENDING TO ${targetPlatform}: channel=${targetChannelId}, replyToMessageId=${replyToMessageId}, hasReplyInfo=${!!replyInfo}`);
-      const sentMessageId = await service.sendMessage(formattedContent, attachments, replyToMessageId, targetChannelId);
+      const sentMessageId = await service.sendMessage(formattedContent, attachments, replyToMessageId, targetChannelId, message);
       this.rateLimiter.recordMessage(targetPlatform, formattedContent, attachments);
       
       // Track the sent message ID in our mapping
