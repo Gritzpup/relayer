@@ -157,9 +157,8 @@ export class MessageFormatter {
       }
       formattedContent = `↩️ Replying to ${replyAuthor}: "${replyPreview}"\n\n${formattedContent}`;
     } else if (replyInfo && targetPlatform === Platform.Discord) {
-      // For Discord, only add reply context if we don't have a message reference
-      // (handled in sendMessage with reply parameter)
-      // This is for native replies that can't be properly linked
+      // For Discord, add reply context when we have replyInfo
+      // This happens when source is Twitch or when we can't link as native reply
       const replyPreview = replyInfo.content.length > 50 
         ? replyInfo.content.substring(0, 50) + '...' 
         : replyInfo.content;
@@ -168,18 +167,27 @@ export class MessageFormatter {
       if (replyInfo.platform) {
         const replyIcon = this.getPlatformIcon(replyInfo.platform, targetPlatform);
         formattedReplyAuthor = `${replyIcon} **[${replyInfo.platform}]** **${replyInfo.author}**`;
+      } else {
+        // If no platform specified, but the author is being replied to, show just bold name
+        formattedReplyAuthor = `**${replyInfo.author}**`;
       }
       formattedContent = `↩️ Replying to ${formattedReplyAuthor}: "${replyPreview}"\n\n${formattedContent}`;
     } else if (replyInfo && targetPlatform === Platform.Telegram) {
-      // For Telegram, if we don't have a message ID to reply to (native reply),
-      // add simplified reply context (no message preview since it's visible above)
+      // For Telegram, add reply context when we have replyInfo
+      // This happens when source is Twitch or when we can't link as native reply
+      const replyPreview = replyInfo.content.length > 50 
+        ? replyInfo.content.substring(0, 50) + '...' 
+        : replyInfo.content;
       let formattedReplyAuthor = this.escapeHtml(replyInfo.author);
       if (replyInfo.platform) {
         const replyIcon = this.getPlatformIcon(replyInfo.platform, targetPlatform);
         const escapedPlatform = this.escapeHtml(replyInfo.platform);
         formattedReplyAuthor = `${replyIcon} <b>[${escapedPlatform}]</b> <b>${formattedReplyAuthor}</b>`;
+      } else {
+        // If no platform specified, but the author is being replied to, show just bold name
+        formattedReplyAuthor = `<b>${formattedReplyAuthor}</b>`;
       }
-      formattedContent = `↩️ Replying to ${formattedReplyAuthor}\n\n${formattedContent}`;
+      formattedContent = `↩️ Replying to ${formattedReplyAuthor}: "${replyPreview}"\n\n${formattedContent}`;
     }
     // For Telegram with proper message ID, we'll use reply_to_message_id in sendMessage
 

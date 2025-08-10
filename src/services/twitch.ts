@@ -451,7 +451,12 @@ export class TwitchService implements PlatformService {
     const mentionMatch = message.match(/^@(\w+):?\s*(.*)$/);
     if (mentionMatch) {
       const mentionedUser = mentionMatch[1].toLowerCase();
-      actualContent = mentionMatch[2] || message;
+      actualContent = mentionMatch[2] || ''; // Remove the @mention from the content
+      
+      // If the content is empty after removing mention, use the full message
+      if (!actualContent.trim()) {
+        actualContent = message;
+      }
       
       logger.info(`REPLY DETECTION: Looking for messages from @${mentionedUser}`);
       logger.info(`REPLY DETECTION: Current message keys: [${Array.from(this.recentMessages.keys()).join(', ')}]`);
@@ -528,10 +533,11 @@ export class TwitchService implements PlatformService {
             content: recentMessage.content,
             platform: recentMessage.platform, // Include the platform information
           };
-          logger.debug(`Detected Twitch reply from ${author} to ${recentMessage.author}${recentMessage.platform ? ` (from ${recentMessage.platform})` : ''}`);
+          logger.info(`TWITCH REPLY DETECTED: ${author} is replying to ${recentMessage.author}${recentMessage.platform ? ` (from ${recentMessage.platform})` : ''}`);
+          logger.info(`TWITCH REPLY CONTENT: Original: "${recentMessage.content.substring(0, 50)}..." Reply: "${actualContent.substring(0, 50)}..."`);
         }
       } else {
-        logger.debug(`No recent message found from ${mentionedUser} for reply`);
+        logger.info(`TWITCH REPLY: No recent message found from @${mentionedUser} for reply detection`);
       }
     }
     
