@@ -23,6 +23,7 @@ export class TwitchService implements PlatformService {
   private reconnectManager: ReconnectManager;
   private isConnecting: boolean = false;
   private recentMessages: Map<string, RecentMessage> = new Map(); // Key: author (lowercase)
+  private continuedMessages: Map<string, string[]> = new Map(); // Track continued message IDs for deletion
   private api?: TwitchAPI;
   private useApi: boolean = false;
   private status: ServiceStatus = {
@@ -306,6 +307,7 @@ export class TwitchService implements PlatformService {
     
     // Clear recent messages on disconnect
     this.recentMessages.clear();
+    this.continuedMessages.clear();
     
     this.status.connected = false;
     logger.info('Twitch disconnected');
@@ -355,6 +357,7 @@ export class TwitchService implements PlatformService {
     }
 
     let firstMessageId: string | undefined;
+    const allMessageIds: string[] = [];
     
     // Send all message parts
     for (let i = 0; i < messageParts.length; i++) {
@@ -376,6 +379,11 @@ export class TwitchService implements PlatformService {
       } else {
         // Use TMI.js
         await this.client.say(channel, part);
+      }
+      
+      // Collect all message IDs
+      if (messageId) {
+        allMessageIds.push(messageId);
       }
       
       // Store the first message ID to return
@@ -406,6 +414,13 @@ export class TwitchService implements PlatformService {
       }
     }
     
+    // If we sent multiple parts, track the continued message IDs for deletion
+    if (firstMessageId && allMessageIds.length > 1) {
+      const continuedIds = allMessageIds.slice(1); // All IDs except the first
+      this.continuedMessages.set(firstMessageId, continuedIds);
+      logger.info(`TWITCH SPLIT: Tracked ${continuedIds.length} continued messages for parent ${firstMessageId}`);
+    }
+    
     return firstMessageId;
   }
 
@@ -419,16 +434,35 @@ export class TwitchService implements PlatformService {
   async deleteMessage(messageId: string): Promise<boolean> {
     const channel = config.twitch.channel;
     
+    // Check if this message has continued parts
+    const continuedIds = this.continuedMessages.get(messageId);
+    
     // Try to use the API if available (requires moderator:manage:chat_messages scope)
     if (this.useApi && this.api) {
       try {
+        // Delete the main message
         const success = await this.api.deleteChatMessage(channel, messageId);
-        if (success) {
-          return true;
+        if (!success) {
+          logger.warn(`Failed to delete message ${messageId} via API`);
+          return false;
         }
-        // If API fails, don't fall back to TMI.js as it's deprecated
-        logger.warn(`Failed to delete message ${messageId} via API`);
-        return false;
+        
+        // Delete all continued messages if any
+        if (continuedIds && continuedIds.length > 0) {
+          logger.info(`TWITCH DELETE: Deleting ${continuedIds.length} continued messages for ${messageId}`);
+          for (const continuedId of continuedIds) {
+            try {
+              await this.api.deleteChatMessage(channel, continuedId);
+              logger.debug(`Deleted continued message ${continuedId}`);
+            } catch (error) {
+              logger.error(`Failed to delete continued message ${continuedId}: ${error}`);
+            }
+          }
+          // Clean up the tracking
+          this.continuedMessages.delete(messageId);
+        }
+        
+        return true;
       } catch (error) {
         logger.error(`Error deleting message via API: ${error}`);
         return false;
