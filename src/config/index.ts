@@ -87,10 +87,6 @@ export const channelMappings: ChannelMappings = {
     discord: '1401061935604174928',
     telegram: '104'
   },
-  'test': {
-    discord: '1402671254896644167',
-    telegram: '918'
-  },
   'dev': {
     discord: '1402671075816636546',
     telegram: '774'
