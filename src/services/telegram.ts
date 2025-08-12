@@ -268,6 +268,13 @@ export class TelegramService implements PlatformService {
         return; // Don't reconnect for conflicts
       }
       
+      // Handle file-related errors
+      if (errorMessage.includes('wrong file_id') || errorMessage.includes('file is temporarily unavailable')) {
+        logger.warn('Telegram file error detected, will continue normally:', errorMessage);
+        // Don't disconnect for file errors - they're handled per-message
+        return;
+      }
+      
       if (errorMessage.includes('ETIMEDOUT') || errorMessage.includes('ECONNRESET')) {
         logger.warn('Telegram connection timeout/reset, will reconnect...');
       } else if (errorMessage.includes('502 Bad Gateway') || errorMessage.includes('No workers running')) {
@@ -287,7 +294,9 @@ export class TelegramService implements PlatformService {
       
       // Don't log expected errors as errors
       if (errorMessage.includes('message to edit not found') || 
-          errorMessage.includes('message to delete not found')) {
+          errorMessage.includes('message to delete not found') ||
+          errorMessage.includes('wrong file_id') ||
+          errorMessage.includes('file is temporarily unavailable')) {
         logger.debug(`Expected Telegram error: ${errorMessage}`);
       } else {
         logError(error, 'Telegram error');
@@ -508,7 +517,9 @@ export class TelegramService implements PlatformService {
             error.message.includes('ETIMEDOUT') ||
             error.message.includes('ECONNRESET') ||
             error.message.includes('502 Bad Gateway') ||
-            error.message.includes('No workers running')
+            error.message.includes('No workers running') ||
+            error.message.includes('wrong file_id') ||
+            error.message.includes('file is temporarily unavailable')
           );
           
           if (isRetryable && retryCount < maxRetries) {
@@ -538,9 +549,19 @@ export class TelegramService implements PlatformService {
               media: emoji.url!,
               caption: index === 0 ? content : undefined,
             }));
-            // sendMediaGroup returns an array, so handle it directly
-            const messages = await this.bot.sendMediaGroup(chatId, media, messageOptions);
-            messageId = messages[0].message_id.toString();
+            // sendMediaGroup returns an array, so handle it appropriately
+            try {
+              const messages = await sendWithRetry(async () => {
+                const result = await this.bot.sendMediaGroup(chatId, media, messageOptions);
+                return result[0]; // Return first message for consistency with sendWithRetry
+              });
+              messageId = messages.message_id.toString();
+            } catch (error: any) {
+              // If media group fails, try sending just the content as text
+              logger.error('Failed to send media group, falling back to text:', error.message);
+              const msg = await sendWithRetry(() => this.bot.sendMessage(chatId, content, messageOptions));
+              messageId = msg.message_id.toString();
+            }
           } else {
             // Single custom emoji - send as small photo
             const msg = await sendWithRetry(() => this.bot.sendPhoto(chatId, customEmojis[0].url!, { 
@@ -554,28 +575,43 @@ export class TelegramService implements PlatformService {
         
         // Handle other attachments normally
         for (const attachment of otherAttachments) {
-          let msg: TelegramBot.Message;
-          if (attachment.type === 'image' || attachment.type === 'gif') {
-            if (attachment.url) {
-              msg = await sendWithRetry(() => this.bot.sendPhoto(chatId, attachment.url!, { caption: content, ...messageOptions }));
-            } else if (attachment.data) {
-              msg = await sendWithRetry(() => this.bot.sendPhoto(chatId, attachment.data!, { caption: content, ...messageOptions }));
+          try {
+            let msg: TelegramBot.Message | undefined;
+            if (attachment.type === 'image' || attachment.type === 'gif') {
+              if (attachment.url) {
+                msg = await sendWithRetry(() => this.bot.sendPhoto(chatId, attachment.url!, { caption: content, ...messageOptions }));
+              } else if (attachment.data) {
+                msg = await sendWithRetry(() => this.bot.sendPhoto(chatId, attachment.data!, { caption: content, ...messageOptions }));
+              }
+            } else if (attachment.type === 'video') {
+              if (attachment.url) {
+                msg = await sendWithRetry(() => this.bot.sendVideo(chatId, attachment.url!, { caption: content, ...messageOptions }));
+              } else if (attachment.data) {
+                msg = await sendWithRetry(() => this.bot.sendVideo(chatId, attachment.data!, { caption: content, ...messageOptions }));
+              }
+            } else {
+              if (attachment.url) {
+                msg = await sendWithRetry(() => this.bot.sendDocument(chatId, attachment.url!, { caption: content, ...messageOptions }));
+              } else if (attachment.data) {
+                msg = await sendWithRetry(() => this.bot.sendDocument(chatId, attachment.data!, { caption: content, ...messageOptions }));
+              }
             }
-          } else if (attachment.type === 'video') {
-            if (attachment.url) {
-              msg = await sendWithRetry(() => this.bot.sendVideo(chatId, attachment.url!, { caption: content, ...messageOptions }));
-            } else if (attachment.data) {
-              msg = await sendWithRetry(() => this.bot.sendVideo(chatId, attachment.data!, { caption: content, ...messageOptions }));
+            if (msg && !messageId) {
+              messageId = msg.message_id.toString();
             }
-          } else {
-            if (attachment.url) {
-              msg = await sendWithRetry(() => this.bot.sendDocument(chatId, attachment.url!, { caption: content, ...messageOptions }));
-            } else if (attachment.data) {
-              msg = await sendWithRetry(() => this.bot.sendDocument(chatId, attachment.data!, { caption: content, ...messageOptions }));
+          } catch (error: any) {
+            // Log error but continue with other attachments
+            logger.error(`Failed to send attachment (${attachment.type}), skipping:`, error.message);
+            // If this was the first attachment and we haven't sent anything yet, 
+            // make sure we at least send the text content
+            if (!messageId && content) {
+              try {
+                const msg = await sendWithRetry(() => this.bot.sendMessage(chatId, content, messageOptions));
+                messageId = msg.message_id.toString();
+              } catch (textError) {
+                logger.error('Failed to send text fallback:', textError);
+              }
             }
-          }
-          if (msg! && !messageId) {
-            messageId = msg!.message_id.toString();
           }
         }
         
@@ -690,42 +726,72 @@ export class TelegramService implements PlatformService {
     }
 
     if (msg.photo) {
-      const largestPhoto = msg.photo[msg.photo.length - 1];
-      const fileLink = await this.bot.getFileLink(largestPhoto.file_id);
-      attachments.push({
-        type: 'image',
-        url: fileLink,
-      });
+      try {
+        const largestPhoto = msg.photo[msg.photo.length - 1];
+        const fileLink = await this.bot.getFileLink(largestPhoto.file_id);
+        attachments.push({
+          type: 'image',
+          url: fileLink,
+        });
+      } catch (error) {
+        logger.error('Failed to get photo file link:', error);
+        // Continue without the attachment rather than crashing
+      }
     }
 
     if (msg.video) {
-      const fileLink = await this.bot.getFileLink(msg.video.file_id);
-      attachments.push({
-        type: 'video',
-        url: fileLink,
-      });
+      try {
+        const fileLink = await this.bot.getFileLink(msg.video.file_id);
+        attachments.push({
+          type: 'video',
+          url: fileLink,
+        });
+      } catch (error) {
+        logger.error('Failed to get video file link:', error);
+        // Continue without the attachment rather than crashing
+      }
     }
 
     if (msg.document) {
-      const fileLink = await this.bot.getFileLink(msg.document.file_id);
-      attachments.push({
-        type: 'file',
-        url: fileLink,
-        filename: msg.document.file_name,
-        mimeType: msg.document.mime_type,
-      });
+      try {
+        const fileLink = await this.bot.getFileLink(msg.document.file_id);
+        attachments.push({
+          type: 'file',
+          url: fileLink,
+          filename: msg.document.file_name,
+          mimeType: msg.document.mime_type,
+        });
+      } catch (error) {
+        logger.error('Failed to get document file link:', error);
+        // Continue without the attachment rather than crashing
+      }
     }
 
     if (msg.sticker) {
-      const fileLink = await this.bot.getFileLink(msg.sticker.file_id);
-      attachments.push({
-        type: 'sticker',
-        url: fileLink,
-        filename: 'sticker.webp',
-        mimeType: 'image/webp',
-        // Store emoji for Twitch display
-        data: msg.sticker.emoji ? Buffer.from(msg.sticker.emoji) : undefined,
-      });
+      try {
+        const fileLink = await this.bot.getFileLink(msg.sticker.file_id);
+        attachments.push({
+          type: 'sticker',
+          url: fileLink,
+          filename: 'sticker.webp',
+          mimeType: 'image/webp',
+          // Store emoji for Twitch display
+          data: msg.sticker.emoji ? Buffer.from(msg.sticker.emoji) : undefined,
+        });
+      } catch (error) {
+        logger.error('Failed to get sticker file link:', error);
+        // If we have emoji data, still include the sticker info
+        if (msg.sticker.emoji) {
+          attachments.push({
+            type: 'sticker',
+            url: '',  // No URL available
+            filename: 'sticker.webp',
+            mimeType: 'image/webp',
+            data: Buffer.from(msg.sticker.emoji),
+          });
+        }
+        // Continue without the full attachment rather than crashing
+      }
     }
 
     const username = msg.from?.username || msg.from?.first_name || 'Unknown';

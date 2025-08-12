@@ -112,6 +112,8 @@ export class RelayManager {
   private async handleMessage(message: RelayMessage): Promise<void> {
     // Always track the message, even if we're not relaying it
     // This allows us to handle replies to native messages
+    logger.info(`[CHANNEL DEBUG] Message from ${message.platform} channel: ${message.channelName} (ID: ${message.channelId})`);
+    
     if (message.replyTo) {
       logger.debug(`Processing message ${message.id} from ${message.platform} which is a reply to ${message.replyTo.messageId}`);
       if (message.replyTo.platform) {
@@ -437,8 +439,8 @@ export class RelayManager {
     // Twitch doesn't have multiple channels, so skip channel mapping for it
     if (targetPlatform === Platform.Twitch) {
       // Only relay general channel messages to Twitch
-      if (message.channelName && message.channelName !== 'general') {
-        logger.info(`Skipping ${message.channelName} message to Twitch - only general channel is relayed`);
+      if (!message.channelName || message.channelName !== 'general') {
+        logger.info(`Skipping ${message.channelName || 'unmapped channel'} message to Twitch - only general channel is relayed`);
         return;
       }
       logger.info(`Routing message from ${message.platform} #general → Twitch`);
