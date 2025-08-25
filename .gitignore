@@ -45,3 +45,6 @@ relay_messages.db
 # Sensitive tokens
 twitch_refresh_token.txt
 *_refresh_token.txt
+# SQLite temporary files
+*.db-shm
+*.db-wal
