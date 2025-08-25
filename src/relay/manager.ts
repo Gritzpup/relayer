@@ -213,6 +213,7 @@ export class RelayManager {
                 timestamp: new Date(),
                 attachments: [],
                 replyTo: {
+                  messageId: message.messageId,
                   author: message.author,
                   content: message.content, // Use the new edited content
                   platform: message.platform

@@ -72,18 +72,38 @@ export class TelegramService implements PlatformService {
         logger.info(`Processing reply message ${msg.message_id}, original thread_id: ${threadId}`);
         
         // For replies, try to determine the actual topic from the message being replied to
-        // Try to find the channel mapping, but don't skip if not found
+        // First check if threadId matches a known topic
         if (threadId) {
           channelName = Object.keys(channelMappings).find(name => 
             channelMappings[name].telegram === threadId.toString()
           );
+          
+          // If threadId doesn't match any topic, it might be a reply in general chat
+          // In general chat, message_thread_id can be the ID of the message being replied to
+          if (!channelName) {
+            // Check if this looks like a message ID (large number) rather than a topic ID
+            const threadIdNum = parseInt(threadId.toString());
+            if (threadIdNum > 1000) {
+              // This is likely a reply in general chat
+              channelName = Object.keys(channelMappings).find(name => 
+                !channelMappings[name].telegram
+              );
+              logger.info(`Reply ${msg.message_id} has large thread_id ${threadId}, treating as general chat reply`);
+            }
+          }
+        } else {
+          // No thread ID means general chat
+          channelName = Object.keys(channelMappings).find(name => 
+            !channelMappings[name].telegram
+          );
         }
         
-        // If no channel found by thread ID, default to general
+        // If still no channel found, skip the message
         if (!channelName) {
-          channelName = 'general';
-          logger.info(`Reply message ${msg.message_id} defaulting to #general channel`);
+          logger.warn(`Reply message ${msg.message_id} from unmapped topic ${threadId}, skipping`);
+          return;
         }
+        logger.info(`Reply message ${msg.message_id} mapped to channel: ${channelName}`);
       } else {
         // For non-reply messages, use the original logic
         // Find channel name based on thread ID

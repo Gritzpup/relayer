@@ -43,41 +43,69 @@ async function checkAndSetupDeletionDetector() {
   if (!fs.existsSync(SESSION_FILE)) {
     log('\n🔐 Telegram authentication required for deletion detector', colors.yellow);
     log('This is a one-time setup process.', colors.cyan);
+    log('', colors.reset);
     
-    // Run authentication script
-    const authScript = `
-import os
-import sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from bot import app
-import asyncio
-
-async def authenticate():
-    await app.start()
-    print("\\n✅ Authentication successful! Session saved.")
-    await app.stop()
-
-if __name__ == "__main__":
-    asyncio.run(authenticate())
-`;
-
-    const authFile = path.join(DELETION_DETECTOR_DIR, 'auth_temp.py');
-    fs.writeFileSync(authFile, authScript);
-
-    try {
-      log('\nPlease authenticate with Telegram:', colors.bright);
-      log('1. Enter your phone number (with country code, e.g., +1234567890)', colors.cyan);
-      log('2. Enter the verification code sent to your Telegram app', colors.cyan);
+    log('━'.repeat(60), colors.cyan);
+    log('📱 TELEGRAM AUTHENTICATION:', colors.bright + colors.yellow);
+    log('━'.repeat(60), colors.cyan);
+    log('', colors.reset);
+    
+    log('The deletion detector needs to authenticate with Telegram to monitor messages.', colors.cyan);
+    log('This requires a real Telegram account (not a bot token).', colors.yellow);
+    log('', colors.reset);
+    
+    log('Starting authentication process...', colors.bright);
+    log('You will be asked to:', colors.cyan);
+    log('  1. Enter your phone number with country code (e.g., +1234567890)', colors.cyan);
+    log('  2. Enter the verification code sent to your Telegram app', colors.cyan);
+    log('  3. Enter your 2FA password if you have one set', colors.cyan);
+    log('', colors.reset);
+    
+    log('━'.repeat(60), colors.cyan);
+    log('', colors.reset);
+    
+    // Check if we're in an interactive terminal
+    const isInteractive = process.stdin.isTTY && process.stdout.isTTY;
+    
+    if (isInteractive) {
+      // Run authentication script interactively
+      try {
+        const authPath = path.join(DELETION_DETECTOR_DIR, 'authenticate.py');
+        const pythonPath = path.join(VENV_DIR, 'bin', 'python');
+        
+        log('Starting interactive authentication...', colors.bright);
+        log('', colors.reset);
+        
+        execSync(`${pythonPath} ${authPath}`, { 
+          cwd: DELETION_DETECTOR_DIR, 
+          stdio: 'inherit'
+        });
+        
+        log('\n✅ Authentication successful!', colors.green);
+        log('Continuing to start services...', colors.cyan);
+        
+        // Give a moment for the session file to be written
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Check if session was created
+        if (!fs.existsSync(SESSION_FILE)) {
+          throw new Error('Session file was not created');
+        }
+      } catch (error) {
+        log('\n❌ Authentication failed or was cancelled', colors.red);
+        log('Please run the command again when ready to authenticate.', colors.yellow);
+        process.exit(1);
+      }
+    } else {
+      // Non-interactive terminal - show manual instructions
+      log('⚠️  Cannot run interactive authentication in this environment', colors.yellow);
       log('', colors.reset);
-
-      execSync(`./venv/bin/python ${authFile}`, { cwd: DELETION_DETECTOR_DIR, stdio: 'inherit' });
-      fs.unlinkSync(authFile);
-      
-      log('\n✅ Authentication complete!', colors.green);
-    } catch (error) {
-      log('❌ Authentication failed', colors.red);
-      if (fs.existsSync(authFile)) fs.unlinkSync(authFile);
-      process.exit(1);
+      log('Please authenticate manually by running:', colors.bright);
+      log(`  cd ${DELETION_DETECTOR_DIR}`, colors.green);
+      log('  ./venv/bin/python authenticate.py', colors.green);
+      log('', colors.reset);
+      log('After authentication, run this command again to start the service.', colors.yellow);
+      process.exit(0);
     }
   } else {
     log('✅ Deletion detector is already authenticated', colors.green);

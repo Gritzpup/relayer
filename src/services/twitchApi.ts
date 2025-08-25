@@ -206,6 +206,25 @@ export class TwitchAPI {
   }
 
   /**
+   * Check if we have moderator scope for message deletion
+   */
+  async hasModeratorScope(): Promise<boolean> {
+    try {
+      const response = await axios.get('https://id.twitch.tv/oauth2/validate', {
+        headers: {
+          'Authorization': `Bearer ${this.accessToken}`,
+        },
+      });
+      
+      const scopes = response.data.scopes || [];
+      return scopes.includes('moderator:manage:chat_messages');
+    } catch (error) {
+      logger.error('Failed to check moderator scope:', error);
+      return false;
+    }
+  }
+
+  /**
    * Check if we have the required scopes for API chat
    */
   async hasRequiredScopes(): Promise<boolean> {

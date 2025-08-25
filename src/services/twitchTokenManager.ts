@@ -139,16 +139,36 @@ export class TwitchTokenManager {
 
   // Schedule automatic token refresh
   startAutoRefresh(): void {
-    // Check every 30 minutes
+    logger.info('Starting automatic Twitch token refresh (every 3 hours)');
+    
+    // Immediately refresh if expired
+    if (this.isTokenExpired()) {
+      this.refreshToken().catch(error => {
+        logger.error('Initial token refresh failed:', error);
+      });
+    }
+    
+    // Refresh every 3 hours regardless of expiry
+    setInterval(async () => {
+      try {
+        logger.info('Performing scheduled 3-hour token refresh');
+        await this.refreshToken();
+      } catch (error) {
+        logger.error('Scheduled token refresh failed:', error);
+      }
+    }, 3 * 60 * 60 * 1000); // 3 hours in milliseconds
+    
+    // Also check every 30 minutes in case token expires early
     setInterval(async () => {
       if (this.isTokenExpired()) {
         try {
+          logger.info('Token expired, refreshing now');
           await this.refreshToken();
         } catch (error) {
-          logger.error('Auto refresh failed:', error);
+          logger.error('Emergency token refresh failed:', error);
         }
       }
-    }, 30 * 60 * 1000);
+    }, 30 * 60 * 1000); // 30 minutes
   }
 }
 

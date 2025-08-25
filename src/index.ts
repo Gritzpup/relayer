@@ -4,6 +4,7 @@ import { logger, logError } from './utils/logger';
 import { messageDb } from './database/db';
 import express from 'express';
 import webhookRouter, { setRelayManager } from './api/webhook';
+import { twitchTokenManager } from './services/twitchTokenManager';
 
 let relayManager: RelayManager | null = null;
 
@@ -13,6 +14,11 @@ async function main() {
     
     validateConfig();
     logger.info('Configuration validated successfully');
+
+    // Initialize Twitch token manager and start auto-refresh
+    await twitchTokenManager.initialize();
+    twitchTokenManager.startAutoRefresh();
+    logger.info('Twitch token manager initialized');
 
     // Initialize database
     await messageDb.initialize();

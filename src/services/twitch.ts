@@ -60,13 +60,7 @@ export class TwitchService implements PlatformService {
 
     // Initialize Twitch API if client ID is provided
     if (config.twitch.clientId && config.twitch.useApiForChat) {
-      // Extract access token from oauth string
-      const accessToken = config.twitch.oauth.startsWith('oauth:') 
-        ? config.twitch.oauth.substring(6) 
-        : config.twitch.oauth;
-        
-      this.api = new TwitchAPI(accessToken, config.twitch.clientId);
-      logger.info('Twitch API client initialized');
+      this.initializeTwitchApi();
     }
 
     this.setupEventHandlers();
@@ -208,6 +202,79 @@ export class TwitchService implements PlatformService {
     // Note: tmi.js doesn't expose a general error event - errors are handled through disconnected event
   }
 
+  private async initializeTwitchApi(): Promise<void> {
+    try {
+      // Get token from token manager
+      const accessToken = await twitchTokenManager.getAccessToken();
+      this.api = new TwitchAPI(accessToken, config.twitch.clientId!);
+      logger.info('Twitch API client initialized');
+      
+      // Validate the token and set up API
+      const isValid = await this.api.validateToken();
+      if (isValid) {
+        logger.info('Twitch API token validated successfully');
+        const hasScopes = await this.api.hasRequiredScopes();
+        if (hasScopes) {
+          logger.info('Twitch token has required scopes for Chat API');
+          const hasDeletionScope = await this.api.hasModeratorScope();
+          if (hasDeletionScope) {
+            logger.info('Twitch token has moderator:manage:chat_messages scope for message deletion');
+          }
+          this.useApi = true;
+          logger.info('Twitch Chat API enabled - messages will be sent via API');
+        } else {
+          logger.warn('Twitch token missing required scopes for Chat API - falling back to TMI.js');
+          this.useApi = false;
+        }
+      } else {
+        logger.warn('Twitch API token validation failed - falling back to TMI.js');
+        this.useApi = false;
+      }
+      
+      // Update API token when refreshed
+      twitchTokenManager.onTokenRefresh(async (newToken) => {
+        if (this.api) {
+          this.api.updateToken(newToken);
+          logger.info('Twitch API token updated from token manager');
+          // Re-validate after update
+          const isValid = await this.api.validateToken();
+          if (isValid) {
+            const hasScopes = await this.api.hasRequiredScopes();
+            this.useApi = hasScopes;
+            logger.info(`Twitch API re-validated after token refresh. API enabled: ${this.useApi}`);
+          }
+        }
+        // Also update TMI client
+        this.updateTmiToken(newToken);
+      });
+    } catch (error) {
+      logger.error('Failed to initialize Twitch API with token manager:', error);
+      // Fallback to config token
+      const accessToken = config.twitch.oauth.startsWith('oauth:') 
+        ? config.twitch.oauth.substring(6) 
+        : config.twitch.oauth;
+      this.api = new TwitchAPI(accessToken, config.twitch.clientId!);
+      logger.info('Twitch API client initialized with fallback token');
+      this.useApi = false;
+    }
+  }
+
+  private updateTmiToken(accessToken: string): void {
+    // Update the TMI client with new token
+    const oauthToken = accessToken.startsWith('oauth:') ? accessToken : `oauth:${accessToken}`;
+    (this.client as any).opts.identity.password = oauthToken;
+    
+    // If connected, disconnect and reconnect with new token
+    if (this.status.connected) {
+      logger.info('Reconnecting TMI client with new token');
+      this.client.disconnect().then(() => {
+        this.connect();
+      }).catch(error => {
+        logger.error('Failed to reconnect TMI client:', error);
+      });
+    }
+  }
+
   private async connectInternal(): Promise<void> {
     // Prevent duplicate connection attempts
     if (this.isConnecting || this.status.connected) {
@@ -225,6 +292,11 @@ export class TwitchService implements PlatformService {
         } catch (err) {
           // Ignore disconnect errors during cleanup
         }
+      }
+      
+      // Ensure API is initialized if not already
+      if (!this.api && config.twitch.clientId && config.twitch.useApiForChat) {
+        await this.initializeTwitchApi();
       }
       
       // Get fresh token from token manager
