@@ -49,7 +49,7 @@ export interface RateLimitInfo {
 }
 
 export type MessageHandler = (message: RelayMessage) => Promise<void>;
-export type DeleteHandler = (platform: Platform, messageId: string) => Promise<void>;
+export type DeleteHandler = (platform: Platform, messageId: string, isAdminDeletion?: boolean) => Promise<void>;
 
 export interface ChannelMapping {
   discord: string;

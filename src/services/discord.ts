@@ -10,6 +10,7 @@ export class DiscordService implements PlatformService {
   private messageHandler?: MessageHandler;
   private deleteHandler?: DeleteHandler;
   private reconnectManager: ReconnectManager;
+  private adminUserIds: Set<string> = new Set();
   private status: ServiceStatus = {
     platform: Platform.Discord,
     connected: false,
@@ -23,9 +24,14 @@ export class DiscordService implements PlatformService {
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildModeration,
       ],
       partials: [Partials.Message, Partials.Channel],
     });
+    
+    // Add your Discord user ID here as admin
+    // You can find your ID by enabling Developer Mode in Discord and right-clicking your username
+    this.adminUserIds.add('746386717'); // Add your Discord user ID here
 
     this.reconnectManager = new ReconnectManager(
       'Discord',
@@ -41,13 +47,20 @@ export class DiscordService implements PlatformService {
   }
 
   private setupEventHandlers(): void {
+    logger.info('[DISCORD] Setting up event handlers...');
+    console.log('[DISCORD] Initializing Discord event handlers');
+    
     this.client.on('ready', () => {
-      logger.info(`Discord bot logged in as ${this.client.user?.tag}`);
+      logger.info(`[DISCORD] ✅ Connected successfully as ${this.client.user?.tag}`);
+      console.log(`[DISCORD] Ready event fired - bot is connected as ${this.client.user?.tag}`);
+      console.log(`[DISCORD] Bot ID: ${this.client.user?.id}`);
+      console.log(`[DISCORD] Watching channels:`, Object.entries(channelMappings).map(([name, map]) => `${name}: ${map.discord}`));
       this.status.connected = true;
     });
 
     this.client.on('messageCreate', async (message: Message) => {
       // Debug logging to see ALL messages
+      console.log(`[DISCORD MESSAGE] Received from ${message.author.username} (bot=${message.author.bot}) in channel ${message.channel.id}`);
       logger.debug(`[DEBUG] Discord message received: author="${message.author.username}" (bot=${message.author.bot}, id=${message.author.id}) channel=${message.channel.id} content="${message.content?.substring(0, 50)}..."`);
       
       if (message.author.bot) {
@@ -88,14 +101,28 @@ export class DiscordService implements PlatformService {
     });
 
     this.client.on('error', (error: Error) => {
+      console.error('[DISCORD ERROR]', error.message);
       logError(error, 'Discord client error');
       this.status.lastError = error.message;
     });
 
     this.client.on('disconnect', () => {
+      console.warn('[DISCORD] Disconnected from Discord');
       logger.warn('Discord disconnected');
       this.status.connected = false;
       this.reconnectManager.scheduleReconnect();
+    });
+    
+    // Add debug event
+    this.client.on('debug', (info: string) => {
+      if (info.includes('Heartbeat') || info.includes('heartbeat')) return; // Skip heartbeat spam
+      logger.debug(`[DISCORD DEBUG] ${info}`);
+    });
+    
+    // Add warn event
+    this.client.on('warn', (info: string) => {
+      console.warn('[DISCORD WARN]', info);
+      logger.warn(`[DISCORD WARN] ${info}`);
     });
 
     this.client.on('messageUpdate', async (oldMessage: Message | PartialMessage, newMessage: Message | PartialMessage) => {
@@ -139,12 +166,11 @@ export class DiscordService implements PlatformService {
         } catch (error) {
           // Message data not available anymore
           logger.debug('Could not fetch partial deleted message');
+          // Even if we can't fetch the message, check audit logs for admin deletion
+          await this.checkAdminDeletion(message);
           return;
         }
       }
-      
-      // Skip if from a bot
-      if (message.author?.bot) return;
       
       // Check if this channel is in our mapping
       const channelName = Object.keys(channelMappings).find(name => 
@@ -152,11 +178,18 @@ export class DiscordService implements PlatformService {
       );
       if (!channelName) return; // Not a mapped channel
       
-      logger.info(`Discord message deleted: ${message.id} by ${message.author?.username}`);
+      // Check who deleted the message via audit logs
+      const isAdminDeletion = await this.checkAdminDeletion(message);
+      
+      // Skip bot messages unless it's an admin deletion
+      if (message.author?.bot && !isAdminDeletion) return;
+      
+      logger.info(`Discord message deleted: ${message.id} by ${message.author?.username} (admin deletion: ${isAdminDeletion})`);
       
       if (this.deleteHandler) {
         try {
-          await this.deleteHandler(Platform.Discord, message.id);
+          // Pass admin deletion flag to handler
+          await this.deleteHandler(Platform.Discord, message.id, isAdminDeletion);
         } catch (error) {
           logError(error as Error, 'Discord delete handler');
         }
@@ -165,7 +198,17 @@ export class DiscordService implements PlatformService {
   }
 
   private async connectInternal(): Promise<void> {
-    await this.client.login(config.discord.token);
+    logger.info('[DISCORD] Starting connection attempt...');
+    console.log('[DISCORD] Attempting to connect with token:', config.discord.token.substring(0, 20) + '...');
+    
+    try {
+      await this.client.login(config.discord.token);
+      logger.info('[DISCORD] Login method completed, waiting for ready event...');
+    } catch (error) {
+      logger.error('[DISCORD] Failed to login:', error);
+      console.error('[DISCORD] Connection failed:', error);
+      throw error;
+    }
   }
 
   async connect(): Promise<void> {
@@ -326,11 +369,14 @@ export class DiscordService implements PlatformService {
     // Check if this is a reply
     let replyTo: RelayMessage['replyTo'] | undefined;
     if (message.reference && message.reference.messageId) {
+      logger.info(`DISCORD REPLY: Processing reply from ${message.author.username} to message ${message.reference.messageId} at ${new Date().toISOString()}`);
       try {
         const referencedMessage = await message.fetchReference();
         if (referencedMessage) {
           let author = referencedMessage.author.username;
           let content = referencedMessage.content || '[No content]';
+          
+          logger.info(`DISCORD REPLY: Referenced message is from ${referencedMessage.author.username} (bot: ${referencedMessage.author.bot})`);
           
           // If replying to a bot message, extract the original author from the message content
           let replyPlatform: Platform | undefined;
@@ -342,12 +388,14 @@ export class DiscordService implements PlatformService {
               replyPlatform = platformMatch[1] as Platform;
               author = platformMatch[2].trim();
               content = platformMatch[3] || content;
+              logger.info(`DISCORD REPLY: Extracted from bot message - platform: ${replyPlatform}, author: ${author}`);
             } else {
               // Fallback to original pattern without platform extraction
               const authorMatch = content.match(/(?:^[^\[]*)?(?:\[[\w]+\]\s+)?([^:]+):\s*(.*)/);
               if (authorMatch) {
                 author = authorMatch[1].trim();
                 content = authorMatch[2] || content;
+                logger.info(`DISCORD REPLY: Extracted from bot message (no platform) - author: ${author}`);
               }
             }
           }
@@ -392,6 +440,43 @@ export class DiscordService implements PlatformService {
     return 'file';
   }
 
+  private async checkAdminDeletion(message: Message | PartialMessage): Promise<boolean> {
+    try {
+      // Check if the message is in a guild
+      if (!message.guild) return false;
+      
+      // Fetch audit logs
+      const auditLogs = await message.guild.fetchAuditLogs({
+        type: 72, // MESSAGE_DELETE type
+        limit: 5,
+      });
+      
+      // Find the most recent deletion log for this message
+      const now = Date.now();
+      const deletionLog = auditLogs.entries.find(entry => {
+        // Check if this log entry is recent (within 5 seconds)
+        const timeDiff = now - entry.createdTimestamp;
+        if (timeDiff > 5000) return false;
+        
+        // Check if the target matches our message author
+        if (entry.target?.id !== message.author?.id) return false;
+        
+        // Check if the executor is an admin
+        return this.adminUserIds.has(entry.executor?.id || '');
+      });
+      
+      if (deletionLog) {
+        logger.info(`Admin deletion detected: Message ${message.id} deleted by admin ${deletionLog.executor?.username}`);
+        return true;
+      }
+      
+      return false;
+    } catch (error) {
+      logger.debug('Could not check audit logs for deletion:', error);
+      return false;
+    }
+  }
+  
   private extractCustomEmojis(content: string): Array<{name: string, id: string, animated: boolean, url: string}> {
     const emojis: Array<{name: string, id: string, animated: boolean, url: string}> = [];
     

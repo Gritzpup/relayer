@@ -4,17 +4,20 @@
   "description": "Cross-platform chat relay service for Telegram, Discord, and Twitch",
   "main": "dist/index.js",
   "scripts": {
-    "start": "node dist/index.js",
+    "start": "node scripts/start-production.js",
+    "start:prod": "node scripts/start-production.js",
     "dev": "node scripts/start-with-deletion-detector.js",
     "dev:watch": "tsx watch src/index.ts",
-    "dev:no-deletion": "tsx watch src/index.ts",
+    "dev:no-deletion": "tsx src/index.ts",
     "build": "tsc",
     "clean": "rm -rf dist",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit",
     "init-db": "tsx src/database/init.ts",
     "deletion-bot": "cd deletion_detector && python bot.py",
-    "install-python": "cd deletion_detector && pip install -r requirements.txt"
+    "install-python": "cd deletion_detector && pip install -r requirements.txt",
+    "stop": "pkill -f 'tsx.*src/index.ts|deletion_detector/bot.py' || true",
+    "status": "ps aux | grep -E 'tsx.*src/index.ts|deletion_detector/bot.py' | grep -v grep || echo 'No relay processes running'"
   },
   "keywords": [
     "telegram",

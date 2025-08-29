@@ -13,6 +13,10 @@ export class TelegramService implements PlatformService {
   private reconnectManager: ReconnectManager;
   private isConnected: boolean = false;
   private messageTracker: Map<number, string> = new Map(); // Track message ID to mapping ID
+  private isShuttingDown: boolean = false;
+  private pollingActive: boolean = false;
+  private conflictDetected: boolean = false;
+  private adminUserIds: Set<number> = new Set([746386717]); // Add your Telegram user ID here
   private status: ServiceStatus = {
     platform: Platform.Telegram,
     connected: false,
@@ -58,7 +62,13 @@ export class TelegramService implements PlatformService {
     };
     
     this.bot.on('message', async (msg: TelegramBot.Message) => {
-      if (msg.chat.id.toString() !== config.telegram.groupId) return;
+      console.log(`[TELEGRAM MESSAGE] Received from ${msg.from?.username || msg.from?.first_name || 'Unknown'} in chat ${msg.chat.id}`);
+      
+      if (this.conflictDetected || this.isShuttingDown) return;
+      if (msg.chat.id.toString() !== config.telegram.groupId) {
+        console.log(`[TELEGRAM] Skipping message from wrong chat: ${msg.chat.id} !== ${config.telegram.groupId}`);
+        return;
+      }
       if (msg.from?.is_bot) return;
       
       // Get the topic/thread ID (for supergroups with topics)
@@ -202,6 +212,8 @@ export class TelegramService implements PlatformService {
     });
 
     this.bot.on('edited_message', async (msg: TelegramBot.Message) => {
+      if (this.conflictDetected || this.isShuttingDown) return;
+      
       logger.info(`TELEGRAM EDIT EVENT RECEIVED: message_id=${msg.message_id}, from=${msg.from?.username || 'unknown'}, chat_id=${msg.chat.id}`);
       
       if (!msg.from || msg.from.is_bot) {
@@ -281,11 +293,30 @@ export class TelegramService implements PlatformService {
       
       // Handle specific error types
       if (errorMessage.includes('ETELEGRAM: 409') || errorMessage.includes('Conflict')) {
-        logger.error('Another instance of the bot is running. Stopping this instance.');
-        this.status.lastError = 'Bot conflict - another instance running';
-        this.isConnected = false;
-        this.status.connected = false;
+        if (!this.conflictDetected) {
+          console.error('[TELEGRAM] ⚠️ 409 Conflict: Another bot instance is running with the same token');
+          logger.error('Another instance of the bot is running. Stopping polling for this instance.');
+          this.conflictDetected = true;
+          this.status.lastError = 'Bot conflict - another instance running';
+          this.isConnected = false;
+          this.status.connected = false;
+          this.pollingActive = false;  // Make sure to reset this
+          
+          // Stop polling immediately to prevent further errors
+          this.bot.stopPolling({ cancel: true }).catch(err => {
+            logger.error('Error stopping polling after conflict:', err);
+          });
+          
+          // DO NOT try to reconnect when there's a conflict
+          // The user needs to resolve this manually
+          logger.warn('IMPORTANT: Another bot instance is using the same token. Please stop the other instance before restarting this one.');
+        }
         return; // Don't reconnect for conflicts
+      }
+      
+      // Reset conflict flag if we get a different error
+      if (this.conflictDetected) {
+        this.conflictDetected = false;
       }
       
       // Handle file-related errors
@@ -303,10 +334,22 @@ export class TelegramService implements PlatformService {
         logError(error, 'Telegram polling error');
       }
       
+      // Reset all connection flags on error
       this.status.lastError = errorMessage;
       this.status.connected = false;
       this.isConnected = false;
-      this.reconnectManager.scheduleReconnect();
+      this.pollingActive = false;  // IMPORTANT: Reset polling flag on error
+      
+      // Try to stop polling to clean up
+      this.bot.stopPolling({ cancel: true }).catch(() => {
+        // Ignore errors when stopping after a polling error
+      });
+      
+      // Only try to reconnect if we're not shutting down and no conflict detected
+      if (!this.isShuttingDown && !this.conflictDetected) {
+        logger.info('[TELEGRAM] Scheduling reconnection after polling error...');
+        this.reconnectManager.scheduleReconnect();
+      }
     });
 
     this.bot.on('error', (error: Error) => {
@@ -338,6 +381,7 @@ export class TelegramService implements PlatformService {
 
     // Add command handler for /delete
     this.bot.onText(/^\/delete$/, async (msg) => {
+      if (this.conflictDetected || this.isShuttingDown) return;
       if (msg.chat.id.toString() !== config.telegram.groupId) return;
       if (!msg.from || msg.from.is_bot) return;
 
@@ -428,14 +472,37 @@ export class TelegramService implements PlatformService {
   }
 
   private async connectInternal(): Promise<void> {
+    logger.info('[TELEGRAM] Starting connection attempt...');
+    console.log('[TELEGRAM] Attempting to connect with token:', config.telegram.botToken.substring(0, 15) + '...');
+    console.log('[TELEGRAM] Target group ID:', config.telegram.groupId);
+    
     try {
-      if (this.isConnected) {
-        logger.info('Stopping existing Telegram polling...');
-        await this.bot.stopPolling({ cancel: true });
-        this.isConnected = false;
+      // Don't try to connect if conflict detected
+      if (this.conflictDetected) {
+        logger.warn('Cannot connect: Bot conflict detected. Another instance is using this token.');
+        console.error('[TELEGRAM] ⚠️ Bot conflict detected - another instance is running');
+        throw new Error('Bot conflict detected');
       }
       
-      logger.info('Starting Telegram polling with enhanced settings...');
+      // Always try to stop existing polling before reconnecting
+      if (this.pollingActive || this.isConnected) {
+        logger.info('[TELEGRAM] Stopping existing polling before reconnect...');
+        try {
+          await this.bot.stopPolling({ cancel: true });
+        } catch (stopError) {
+          logger.warn('[TELEGRAM] Error stopping polling (this is normal during reconnect):', stopError);
+        }
+        this.isConnected = false;
+        this.pollingActive = false;
+        this.status.connected = false;
+        
+        // Give the connection a moment to fully close
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      
+      logger.info('[TELEGRAM] Starting polling with enhanced settings...');
+      console.log('[TELEGRAM] Starting polling...');
+      this.pollingActive = true;
       await this.bot.startPolling({ 
         polling: { 
           interval: 1000, // Increased interval to reduce server load
@@ -445,60 +512,93 @@ export class TelegramService implements PlatformService {
             allowed_updates: ['message', 'edited_message', 'callback_query']
           }
         },
-        restart: true // Auto-restart on errors
+        restart: false // Don't auto-restart on errors, we handle this manually
       });
       this.isConnected = true;
       this.status.connected = true;
       
       // Test connection and verify bot permissions
       const me = await this.bot.getMe();
-      logger.info(`Telegram bot connected as @${me.username}`);
+      logger.info(`[TELEGRAM] ✅ Successfully connected as @${me.username}`);
+      console.log(`[TELEGRAM] Bot connected successfully as @${me.username}`);
+      console.log(`[TELEGRAM] Bot ID: ${me.id}`);
       
       // Check bot permissions in the group
       try {
         const chat = await this.bot.getChat(config.telegram.groupId);
-        logger.info(`Connected to Telegram group: ${chat.title || 'Unknown'}, type: ${chat.type}`);
+        logger.info(`[TELEGRAM] Connected to group: ${chat.title || 'Unknown'}, type: ${chat.type}`);
+        console.log(`[TELEGRAM] Group info - Title: ${chat.title}, Type: ${chat.type}, ID: ${chat.id}`);
         
         // Get bot member info to check permissions
         const botMember = await this.bot.getChatMember(config.telegram.groupId, me.id);
-        logger.info(`Bot permissions in group: ${JSON.stringify(botMember)}`);
+        logger.info(`[TELEGRAM] Bot permissions: ${JSON.stringify(botMember)}`);  
+        console.log(`[TELEGRAM] Bot status in group: ${botMember.status}`);
         
         if (botMember.status === 'kicked' || botMember.status === 'left') {
+          console.error(`[TELEGRAM] ❌ Bot is ${botMember.status} from the group`);
           throw new Error(`Bot is ${botMember.status} from the group`);
         }
+        console.log('[TELEGRAM] ✅ Bot has proper permissions in the group');
       } catch (chatError) {
+        console.error('[TELEGRAM] Failed to verify group permissions:', chatError);
         logger.error('Failed to get chat/member info:', chatError);
       }
+      
+      console.log('[TELEGRAM] ✅ Connection established and polling active');
     } catch (error) {
-      logger.error('Failed to connect to Telegram:', error);
+      console.error('[TELEGRAM] ❌ Connection failed:', error);
+      logger.error('[TELEGRAM] Failed to connect:', error);
       this.isConnected = false;
       this.status.connected = false;
+      this.pollingActive = false;
       throw error;
     }
   }
 
   async connect(): Promise<void> {
+    // Don't try to connect if conflict detected
+    if (this.conflictDetected) {
+      logger.error('Cannot connect: Another bot instance is using the same token.');
+      logger.error('Please stop the other instance before trying to connect.');
+      throw new Error('Bot conflict - another instance is running');
+    }
+    
     await this.reconnectManager.connect();
   }
 
   async disconnect(): Promise<void> {
+    logger.info('Disconnecting Telegram service...');
+    this.isShuttingDown = true;
     this.reconnectManager.stop();
     
     // Clear message tracker
     this.messageTracker.clear();
     
-    await this.bot.stopPolling();
+    if (this.pollingActive) {
+      await this.bot.stopPolling({ cancel: true });
+      this.pollingActive = false;
+    }
+    
     this.isConnected = false;
     this.status.connected = false;
+    this.conflictDetected = false;
+    this.isShuttingDown = false;
     logger.info('Telegram disconnected');
   }
 
   async sendMessage(content: string, attachments?: Attachment[], replyToMessageId?: string, targetChannelId?: string, _originalMessage?: RelayMessage): Promise<string | undefined> {
+    // Don't send if conflict detected
+    if (this.conflictDetected) {
+      logger.error('Cannot send message: Bot conflict detected');
+      return undefined;
+    }
+    
     const chatId = config.telegram.groupId;
     let messageId: string | undefined;
     let retryCount = 0;
     const maxRetries = 3;
 
+    // [Rest of sendMessage method remains the same...]
     // Prepare options for reply and topic
     const messageOptions: any = {
       parse_mode: 'HTML' as const, // Enable HTML formatting for bold tags
@@ -659,6 +759,12 @@ export class TelegramService implements PlatformService {
   }
 
   async editMessage(messageId: string, newContent: string): Promise<boolean> {
+    // Don't edit if conflict detected
+    if (this.conflictDetected) {
+      logger.error('Cannot edit message: Bot conflict detected');
+      return false;
+    }
+    
     const chatId = config.telegram.groupId;
 
     try {
@@ -678,6 +784,12 @@ export class TelegramService implements PlatformService {
   }
 
   async deleteMessage(messageId: string): Promise<boolean> {
+    // Don't delete if conflict detected
+    if (this.conflictDetected) {
+      logger.error('Cannot delete message: Bot conflict detected');
+      return false;
+    }
+    
     const chatId = config.telegram.groupId;
 
     try {
@@ -701,10 +813,32 @@ export class TelegramService implements PlatformService {
   }
 
   getStatus(): ServiceStatus {
+    // Update connection status based on actual state
+    this.status.connected = this.isConnected && this.pollingActive && !this.conflictDetected;
     return { ...this.status };
+  }
+  
+  // Health check method to verify connection is still alive
+  async isHealthy(): Promise<boolean> {
+    if (!this.isConnected || !this.pollingActive || this.conflictDetected) {
+      return false;
+    }
+    
+    try {
+      // Try to get bot info as a health check
+      await this.bot.getMe();
+      return true;
+    } catch (error) {
+      logger.warn('[TELEGRAM] Health check failed:', error);
+      this.isConnected = false;
+      this.pollingActive = false;
+      this.status.connected = false;
+      return false;
+    }
   }
 
   private async convertMessage(msg: TelegramBot.Message, overrideChannelName?: string): Promise<RelayMessage> {
+    // [convertMessage method remains the same...]
     // Debug logging
     logger.info(`Converting Telegram message ${msg.message_id}:`, {
       text: msg.text,
@@ -727,9 +861,6 @@ export class TelegramService implements PlatformService {
             if (stickerSet && stickerSet.length > 0) {
               const sticker = stickerSet[0];
               const fileLink = await this.bot.getFileLink(sticker.file_id);
-              
-              // Extract the emoji text from the message
-              // const emojiText = msg.text.substring(entity.offset, entity.offset + entity.length);
               
               attachments.push({
                 type: 'custom-emoji',
@@ -755,7 +886,6 @@ export class TelegramService implements PlatformService {
         });
       } catch (error) {
         logger.error('Failed to get photo file link:', error);
-        // Continue without the attachment rather than crashing
       }
     }
 
@@ -768,7 +898,6 @@ export class TelegramService implements PlatformService {
         });
       } catch (error) {
         logger.error('Failed to get video file link:', error);
-        // Continue without the attachment rather than crashing
       }
     }
 
@@ -783,7 +912,6 @@ export class TelegramService implements PlatformService {
         });
       } catch (error) {
         logger.error('Failed to get document file link:', error);
-        // Continue without the attachment rather than crashing
       }
     }
 
@@ -795,36 +923,30 @@ export class TelegramService implements PlatformService {
           url: fileLink,
           filename: 'sticker.webp',
           mimeType: 'image/webp',
-          // Store emoji for Twitch display
           data: msg.sticker.emoji ? Buffer.from(msg.sticker.emoji) : undefined,
         });
       } catch (error) {
         logger.error('Failed to get sticker file link:', error);
-        // If we have emoji data, still include the sticker info
         if (msg.sticker.emoji) {
           attachments.push({
             type: 'sticker',
-            url: '',  // No URL available
+            url: '',
             filename: 'sticker.webp',
             mimeType: 'image/webp',
             data: Buffer.from(msg.sticker.emoji),
           });
         }
-        // Continue without the full attachment rather than crashing
       }
     }
 
     const username = msg.from?.username || msg.from?.first_name || 'Unknown';
     
-    // For sticker-only messages, don't include the emoji in content (it's handled by formatter)
     let content = msg.text || msg.caption || '';
     if (msg.sticker && !msg.text && !msg.caption) {
       content = '';
     }
     
-    // Remove custom emojis from text content since they're sent as images
     if (msg.entities && msg.text && content) {
-      // Process entities in reverse order to maintain correct offsets
       const customEmojiEntities = (msg.entities || [])
         .filter(e => e.type === 'custom_emoji')
         .sort((a, b) => b.offset - a.offset);
@@ -834,26 +956,19 @@ export class TelegramService implements PlatformService {
                   content.substring(entity.offset + entity.length);
       }
       
-      // Trim any extra whitespace
       content = content.trim();
     }
     
-    // Check if this is a reply
     let replyTo: RelayMessage['replyTo'] | undefined;
     if (msg.reply_to_message) {
       const replyMsg = msg.reply_to_message;
       
-      // Process the reply
       let replyAuthor = replyMsg.from?.username || replyMsg.from?.first_name || 'Unknown';
       let replyContent = replyMsg.text || replyMsg.caption || '[No content]';
       
-      // If replying to a bot message, extract the original author from the message content
       let replyPlatform: Platform | undefined;
       if (replyMsg.from?.is_bot && replyContent) {
         logger.info(`REPLY EXTRACTION: Processing bot message reply: "${replyContent}"`);
-        // Pattern: [emoji] [Platform] username: message
-        // First try to extract platform (with optional emoji prefix)
-        // Updated regex to handle emoji prefixes (e.g., "🔴 [Twitch] Username: message")
         const platformMatch = replyContent.match(/^(?:.*?)\[(Discord|Twitch|Telegram)\]\s+([^:]+):\s*(.*)/);
         if (platformMatch) {
           replyPlatform = platformMatch[1] as Platform;
@@ -861,8 +976,6 @@ export class TelegramService implements PlatformService {
           replyContent = platformMatch[3] || '';
           logger.info(`REPLY EXTRACTION: Successfully extracted - platform=${replyPlatform}, author=${replyAuthor}, content="${replyContent}"`);
         } else {
-          // Fallback to original pattern without platform extraction
-          // This handles cases where platform tags are missing or in different formats
           const authorMatch = replyContent.match(/^(?:[^\s]+\s+)?([^:]+):\s*(.*)/);
           if (authorMatch) {
             replyAuthor = authorMatch[1].trim();
@@ -872,8 +985,6 @@ export class TelegramService implements PlatformService {
         }
       }
       
-      // Only set replyTo if we actually have content (not "[No content]")
-      // This prevents showing empty replies when replying to messages not in the bot's history
       if (replyContent !== '[No content]') {
         replyTo = {
           messageId: replyMsg.message_id.toString(),
@@ -887,11 +998,9 @@ export class TelegramService implements PlatformService {
       }
     }
     
-    // Get channel name from thread ID or use override
     const threadId = msg.message_thread_id || undefined;
     let channelName: string | undefined;
     
-    // Use override if provided (for replies that default to general)
     if (overrideChannelName) {
       channelName = overrideChannelName;
     } else if (threadId) {

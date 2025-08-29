@@ -7,6 +7,7 @@ export interface DeletionEvent {
   platform: Platform;
   messageId: string;
   timestamp: number;
+  isAdminDeletion?: boolean;
 }
 
 export type DeletionHandler = (event: DeletionEvent) => Promise<void>;

@@ -36,35 +36,61 @@ export class RelayManager {
     }
 
     logger.info('Starting relay manager...');
+    console.log('[RELAY] Starting relay manager...');
     this.isRunning = true;
 
     // Initialize Redis
+    console.log('[RELAY] Initializing Redis...');
     initializeRedis();
     
     // Subscribe to deletion events from Redis
+    console.log('[RELAY] Subscribing to Redis deletion events...');
     await redisEvents.subscribeToDeletions(async (event: DeletionEvent) => {
       logger.info(`Processing deletion event from Redis: ${event.platform} message ${event.messageId}`);
       await this.handleDeletionEvent(event);
     });
+    console.log('[RELAY] ✅ Redis initialized');
 
+    console.log('[RELAY] Setting up message handlers...');
     this.setupMessageHandlers();
+    console.log('[RELAY] ✅ Message handlers configured');
 
     // Initialize Twitch token manager before connecting
+    console.log('[RELAY] Initializing Twitch service...');
     const twitchService = this.services.get(Platform.Twitch);
     if (twitchService && 'initialize' in twitchService) {
       await (twitchService as any).initialize();
+      console.log('[RELAY] ✅ Twitch service initialized');
     }
 
-    const connectionPromises = Array.from(this.services.values()).map(service => 
-      service.connect().catch(error => {
+    console.log('[RELAY] Connecting to all platforms...');
+    const services = Array.from(this.services.values());
+    
+    for (const service of services) {
+      console.log(`[RELAY] Connecting to ${service.platform}...`);
+      try {
+        await service.connect();
+        console.log(`[RELAY] ✅ ${service.platform} connected successfully`);
+      } catch (error) {
+        console.error(`[RELAY] ❌ Failed to connect to ${service.platform}:`, error);
         logError(error as Error, `Failed to connect ${service.platform}`);
-      })
-    );
-
-    await Promise.all(connectionPromises);
+      }
+    }
     
     logger.info('Relay manager started successfully');
+    console.log('[RELAY] ✅ All connections established');
     this.logStatus();
+    
+    // Log connection status for each service
+    console.log('\n[RELAY] Service Status:');
+    this.services.forEach(service => {
+      const status = service.getStatus();
+      console.log(`  ${service.platform}: ${status.connected ? '✅ Connected' : '❌ Disconnected'}`);
+      if (status.lastError) {
+        console.log(`    Last error: ${status.lastError}`);
+      }
+    });
+    console.log('');
   }
 
   async stop(): Promise<void> {
@@ -103,8 +129,8 @@ export class RelayManager {
         }
       });
       
-      service.onDelete(async (platform: Platform, messageId: string) => {
-        await this.handleDeletion(platform, messageId);
+      service.onDelete(async (platform: Platform, messageId: string, isAdminDeletion?: boolean) => {
+        await this.handleDeletion(platform, messageId, isAdminDeletion || false);
       });
     });
   }
@@ -213,7 +239,7 @@ export class RelayManager {
                 timestamp: new Date(),
                 attachments: [],
                 replyTo: {
-                  messageId: message.messageId,
+                  messageId: message.id,
                   author: message.author,
                   content: message.content, // Use the new edited content
                   platform: message.platform
@@ -334,9 +360,9 @@ export class RelayManager {
     }
   }
 
-  private async handleDeletion(platform: Platform, messageId: string): Promise<void> {
+  private async handleDeletion(platform: Platform, messageId: string, isAdminDeletion: boolean = false): Promise<void> {
     logger.info(`=== HANDLE DELETION CALLED ===`);
-    logger.info(`Platform: ${platform}, Message ID: ${messageId}`);
+    logger.info(`Platform: ${platform}, Message ID: ${messageId}, Admin deletion: ${isAdminDeletion}`);
 
     // Find the mapping for the deleted message
     const mapping = await this.messageMapper.getMappingByPlatformMessage(platform, messageId);
@@ -354,11 +380,12 @@ export class RelayManager {
       mappingId: mapping.id,
       platform,
       messageId,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      isAdminDeletion // Include admin deletion flag
     };
     
     await redisEvents.publishDeletion(deletionEvent);
-    logger.info(`Published deletion event for ${platform} message ${messageId} with mapping ${mapping.id}`);
+    logger.info(`Published deletion event for ${platform} message ${messageId} with mapping ${mapping.id} (admin: ${isAdminDeletion})`);
   }
   
   /**
@@ -368,7 +395,7 @@ export class RelayManager {
     logger.info(`=== HANDLE DELETION EVENT ===`);
     logger.info(`Event:`, event);
     
-    const { mappingId, platform: sourcePlatform } = event;
+    const { mappingId, platform: sourcePlatform, isAdminDeletion } = event;
     
     // Get the mapping
     const mapping = await this.messageMapper.getMapping(mappingId);
@@ -378,16 +405,25 @@ export class RelayManager {
     }
 
     logger.info(`Found mapping for deletion:`, mapping);
+    logger.info(`Is admin deletion: ${isAdminDeletion}`);
 
     // Get all platform messages for this mapping
     const platformMessages = mapping.platformMessages;
     logger.info(`Platform messages to delete:`, platformMessages);
     
-    // Delete the message on all other platforms
+    // Delete the message on all platforms
     for (const [targetPlatform, targetMessageId] of Object.entries(platformMessages)) {
       const targetPlatformEnum = targetPlatform as Platform;
-      if (targetPlatformEnum === sourcePlatform || !targetMessageId) {
-        logger.info(`Skipping ${targetPlatform}: ${targetPlatformEnum === sourcePlatform ? 'source platform' : 'no message ID'}`);
+      
+      // For admin deletions, delete on ALL platforms including source
+      // For regular deletions, skip the source platform
+      if (!isAdminDeletion && targetPlatformEnum === sourcePlatform) {
+        logger.info(`Skipping ${targetPlatform}: source platform (non-admin deletion)`);
+        continue;
+      }
+      
+      if (!targetMessageId) {
+        logger.info(`Skipping ${targetPlatform}: no message ID`);
         continue;
       }
       
@@ -403,7 +439,7 @@ export class RelayManager {
         if (success) {
           logger.info(`✅ Successfully deleted message ${targetMessageId} on ${targetPlatformEnum}`);
         } else {
-          logger.warn(`❌ Failed to delete message ${targetMessageId} on ${targetPlatformEnum}`);
+          logger.warn(`❌ Failed to delete message ${targetMessageId} on ${targetPlatformEnum} (may need moderator permissions)`);
         }
       } catch (error) {
         logger.error(`❌ Error deleting message on ${targetPlatformEnum}:`, error);
@@ -573,16 +609,23 @@ export class RelayManager {
       const sentMessageId = await service.sendMessage(formattedContent, attachments, replyToMessageId, targetChannelId, message);
       this.rateLimiter.recordMessage(targetPlatform, formattedContent, attachments);
       
-      // Track the sent message ID in our mapping
+      // Track the sent message ID in our mapping IMMEDIATELY to avoid race conditions
       if (sentMessageId) {
-        await this.messageMapper.addPlatformMessage(mappingId, targetPlatform, sentMessageId);
-        logger.info(`MAPPING: Added ${targetPlatform} message ${sentMessageId} to mapping ${mappingId}`);
+        // Add detailed logging for debugging
+        logger.info(`MAPPING: About to add ${targetPlatform} message ${sentMessageId} to mapping ${mappingId} at ${new Date().toISOString()}`);
         
-        // Also track in database
+        // Track in mapper first (this is faster and what incoming messages check)
+        await this.messageMapper.addPlatformMessage(mappingId, targetPlatform, sentMessageId);
+        logger.info(`MAPPING: Successfully added ${targetPlatform} message ${sentMessageId} to mapping ${mappingId} at ${new Date().toISOString()}`);
+        
+        // Then track in database (can be slower, used for persistence)
         await messageDb.trackPlatformMessage({
           mappingId,
           platform: targetPlatform,
           messageId: sentMessageId
+        }).catch(err => {
+          // Don't fail the whole operation if database tracking fails
+          logger.error(`Failed to track platform message in database: ${err}`);
         });
       } else {
         logger.warn(`No message ID returned when sending to ${targetPlatform}`);
