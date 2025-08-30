@@ -43,8 +43,26 @@ app = Client(
     workdir=session_path
 )
 
-# Initialize message cache
+# Initialize message cache with size limit
 message_cache = {}
+MAX_CACHE_SIZE = 200  # Limit cache to 200 messages to prevent memory issues
+CACHE_MAX_AGE = 600  # 10 minutes in seconds
+
+def cleanup_old_cache_entries():
+    """Remove old entries from message cache to prevent memory leaks"""
+    current_time = datetime.now()
+    entries_to_remove = []
+    
+    for msg_id, msg_data in message_cache.items():
+        age = (current_time - msg_data['timestamp']).total_seconds()
+        if age > CACHE_MAX_AGE:
+            entries_to_remove.append(msg_id)
+    
+    for msg_id in entries_to_remove:
+        del message_cache[msg_id]
+    
+    if entries_to_remove:
+        logger.info(f"Cleaned up {len(entries_to_remove)} old cache entries")
 
 def get_db():
     """Get database connection with proper timeout and WAL mode"""
@@ -78,6 +96,10 @@ async def track_message(client: Client, message: Message):
     }
     
     logger.info(f"Cached message {message.id} (cache size: {len(message_cache)}, bot: {is_bot})")
+    
+    # Clean up old messages from cache if it's getting too large
+    if len(message_cache) > MAX_CACHE_SIZE:
+        cleanup_old_cache_entries()
 
 # Deletion handler - using decorator  
 @app.on_deleted_messages(filters.chat(GROUP_ID))
@@ -164,8 +186,11 @@ async def periodic_check():
                 else:
                     min_age = 10  # Other messages normal timing
                 
-                if msg_age > min_age and msg_age < 3600:
+                if msg_age > min_age and msg_age < CACHE_MAX_AGE:
                     messages_to_check.append((msg_id, msg_data['chat_id'], is_bot))
+                elif msg_age > CACHE_MAX_AGE:
+                    # Remove very old messages from cache
+                    del message_cache[msg_id]
             
             if messages_to_check:
                 bot_msg_count = sum(1 for _, _, is_bot in messages_to_check if is_bot)

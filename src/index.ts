@@ -5,6 +5,7 @@ import { messageDb } from './database/db';
 import express from 'express';
 import webhookRouter, { setRelayManager } from './api/webhook';
 import { twitchTokenManager } from './services/twitchTokenManager';
+import { memoryMonitor } from './utils/memoryMonitor';
 
 let relayManager: RelayManager | null = null;
 let webhookServer: any = null; // Store server reference for cleanup
@@ -88,6 +89,10 @@ async function main() {
     console.log('  - Telegram') ;
     console.log('  - Twitch');
     console.log('\n[INFO] Press Ctrl+C to stop\n');
+    
+    // Start memory monitoring
+    memoryMonitor.start(60); // Check memory every 60 seconds
+    logger.info('Memory monitoring enabled');
 
     setupGracefulShutdown();
     
@@ -111,6 +116,9 @@ async function main() {
 function setupGracefulShutdown() {
   const shutdown = async (signal: string) => {
     logger.info(`Received ${signal}, shutting down gracefully...`);
+    
+    // Stop memory monitoring
+    memoryMonitor.stop();
     
     if (relayManager) {
       await relayManager.stop();

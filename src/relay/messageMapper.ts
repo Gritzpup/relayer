@@ -10,6 +10,9 @@ interface MessageMapping {
   platformMessages: {
     [key in Platform]?: string;
   };
+  platformChannels?: {
+    [key in Platform]?: string;  // Store channel IDs for each platform
+  };
   content: string;
   author: string;
   timestamp: Date;
@@ -20,7 +23,7 @@ export class MessageMapper {
   private readonly MAPPING_PREFIX = 'mapping:';
   private readonly PLATFORM_PREFIX = 'platform:';
   private readonly AUTHOR_PREFIX = 'author:';
-  private readonly MAPPING_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
+  private readonly MAPPING_TTL = 24 * 60 * 60; // 1 day in seconds (reduced from 7 days to save memory)
 
   constructor() {
     // Redis handles primary storage, SQLite for archival
@@ -37,7 +40,8 @@ export class MessageMapper {
     replyToMessageId?: string,
     replyToContent?: string,
     replyToAuthor?: string,
-    replyToPlatform?: Platform
+    replyToPlatform?: Platform,
+    originalChannelId?: string
   ): Promise<string> {
     const mappingId = this.generateMappingId();
     
@@ -118,6 +122,9 @@ export class MessageMapper {
       platformMessages: {
         [originalPlatform]: originalMessageId
       },
+      platformChannels: originalChannelId ? {
+        [originalPlatform]: originalChannelId
+      } : {},  // Store original channel ID if provided
       content,
       author,
       timestamp: new Date(),
@@ -164,9 +171,9 @@ export class MessageMapper {
   /**
    * Add a platform message ID to an existing mapping
    */
-  async addPlatformMessage(mappingId: string, platform: Platform, messageId: string): Promise<void> {
+  async addPlatformMessage(mappingId: string, platform: Platform, messageId: string, channelId?: string): Promise<void> {
     const startTime = Date.now();
-    logger.debug(`addPlatformMessage: Starting - mapping=${mappingId}, platform=${platform}, messageId=${messageId}`);
+    logger.debug(`addPlatformMessage: Starting - mapping=${mappingId}, platform=${platform}, messageId=${messageId}, channelId=${channelId}`);
     
     // Get existing mapping from Redis
     const mapping = await getMessageMapping(this.MAPPING_PREFIX + mappingId);
@@ -182,6 +189,15 @@ export class MessageMapper {
     
     // Update the mapping
     mapping.platformMessages[platform] = messageId;
+    
+    // Store channel ID if provided
+    if (channelId) {
+      if (!mapping.platformChannels) {
+        mapping.platformChannels = {};
+      }
+      mapping.platformChannels[platform] = channelId;
+      logger.debug(`Storing channel ID ${channelId} for ${platform}`);
+    }
     
     // Save both the mapping and reverse lookup atomically
     const savePromises = [

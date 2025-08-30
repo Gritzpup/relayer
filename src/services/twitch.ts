@@ -498,7 +498,7 @@ export class TwitchService implements PlatformService {
     return false;
   }
 
-  async deleteMessage(messageId: string): Promise<boolean> {
+  async deleteMessage(messageId: string, _channelId?: string): Promise<boolean> {
     const channel = config.twitch.channel;
     
     // Check if this message has continued parts
@@ -717,31 +717,20 @@ export class TwitchService implements PlatformService {
   private storeRecentMessage(id: string, author: string, content: string, timestamp: Date, platform?: Platform, mappingId?: string): void {
     const authorLower = author.toLowerCase();
     const messageData = { id, author, content, timestamp, platform, mappingId };
-    const storedKeys: string[] = [];
     
-    // Store with lowercase key (primary)
+    // Only store with lowercase key to reduce memory usage
     this.recentMessages.set(authorLower, messageData);
-    storedKeys.push(authorLower);
     
-    // Also store with original case if different
-    if (author !== authorLower) {
-      this.recentMessages.set(author, messageData);
-      storedKeys.push(author);
+    // Limit content size to reduce memory
+    if (content.length > 100) {
+      messageData.content = content.substring(0, 100) + '...';
     }
     
-    // If from another platform (relayed message), also store with bot's username
-    // This helps when users reply to bot messages instead of mentioning the original author
-    if (platform && platform !== Platform.Twitch) {
-      const botKey = config.twitch.username.toLowerCase();
-      this.recentMessages.set(botKey, messageData);
-      storedKeys.push(botKey);
-    }
+    logger.info(`STORE MESSAGE: Stored key="${authorLower}" author="${author}" content="${messageData.content.substring(0, 50)}..."${platform ? ` from platform=${platform}` : ''}`);
     
-    logger.info(`STORE MESSAGE: Stored with keys=[${storedKeys.join(', ')}] author="${author}" content="${content.substring(0, 50)}..."${platform ? ` from platform=${platform}` : ''}`);
-    logger.info(`STORE MESSAGE: Map size after store: ${this.recentMessages.size}`);
-    
-    // Clean up old messages (older than 10 minutes)
-    const cutoffTime = timestamp.getTime() - 10 * 60 * 1000;
+    // More aggressive cleanup - keep only 5 minutes of messages and limit total size
+    const MAX_MESSAGES = 50;  // Limit to 50 messages max
+    const cutoffTime = timestamp.getTime() - 5 * 60 * 1000;  // 5 minutes instead of 10
     let deletedCount = 0;
     const keysToDelete: string[] = [];
     
@@ -757,8 +746,20 @@ export class TwitchService implements PlatformService {
       deletedCount++;
     }
     
+    // If still too many messages, remove oldest ones
+    if (this.recentMessages.size > MAX_MESSAGES) {
+      const sortedEntries = Array.from(this.recentMessages.entries())
+        .sort((a, b) => a[1].timestamp.getTime() - b[1].timestamp.getTime());
+      
+      const toRemove = sortedEntries.slice(0, this.recentMessages.size - MAX_MESSAGES);
+      for (const [key] of toRemove) {
+        this.recentMessages.delete(key);
+        deletedCount++;
+      }
+    }
+    
     if (deletedCount > 0) {
-      logger.info(`STORE MESSAGE: Cleaned up ${deletedCount} old message entries`);
+      logger.info(`STORE MESSAGE: Cleaned up ${deletedCount} old message entries (size: ${this.recentMessages.size})`);
     }
   }
 }

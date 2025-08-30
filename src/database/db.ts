@@ -319,24 +319,24 @@ export class MessageDatabase {
     }
   }
 
-  // Cleanup old messages (5 days)
+  // Cleanup old messages (2 days instead of 5 to save memory)
   async cleanupOldMessages(): Promise<number> {
     try {
       // First get the mappings that will be deleted
       const oldMappings = await this.db.all(
-        `SELECT id FROM message_mappings WHERE timestamp < datetime('now', '-5 days')`
+        `SELECT id FROM message_mappings WHERE timestamp < datetime('now', '-2 days')`
       );
       
       if (oldMappings.length === 0) return 0;
       
       // Delete old mappings (platform_messages will cascade delete)
       const result = await this.db.run(
-        `DELETE FROM message_mappings WHERE timestamp < datetime('now', '-5 days')`
+        `DELETE FROM message_mappings WHERE timestamp < datetime('now', '-2 days')`
       );
       
       // Also clean up old telegram tracking
       await this.db.run(
-        `DELETE FROM message_tracking WHERE timestamp < datetime('now', '-5 days')`
+        `DELETE FROM message_tracking WHERE timestamp < datetime('now', '-2 days')`
       );
       
       logger.info(`Cleaned up ${result.changes} old message mappings`);
@@ -347,15 +347,15 @@ export class MessageDatabase {
     }
   }
 
-  // Start periodic cleanup (runs every hour)
+  // Start periodic cleanup (runs every 30 minutes to prevent memory buildup)
   startPeriodicCleanup(): void {
     // Run cleanup immediately
     this.cleanupOldMessages();
     
-    // Then run every hour
+    // Then run every 30 minutes instead of every hour
     this.cleanupInterval = setInterval(() => {
       this.cleanupOldMessages();
-    }, 60 * 60 * 1000); // 1 hour
+    }, 30 * 60 * 1000); // 30 minutes
   }
 
   async close(): Promise<void> {
