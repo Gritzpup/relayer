@@ -106,6 +106,10 @@ export const channelMappings: ChannelMappings = {
   'general': {
     discord: '1397623339660607530',
     telegram: null // General chat has no topic ID
+  },
+  'gaming': {
+    discord: '1400678446727958590',
+    telegram: '11328'
   }
 };
 
