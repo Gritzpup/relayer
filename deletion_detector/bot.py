@@ -27,7 +27,8 @@ logging.getLogger("pyrogram").setLevel(logging.INFO)
 API_ID = os.getenv("TELEGRAM_API_ID")
 API_HASH = os.getenv("TELEGRAM_API_HASH")
 GROUP_ID = int(os.getenv("TELEGRAM_GROUP_ID", "0"))
-WEBHOOK_URL = "http://localhost:5847/api/deletion-webhook"
+WEBHOOK_PORT = os.getenv("WEBHOOK_PORT", "5847")
+WEBHOOK_URL = f"http://localhost:{WEBHOOK_PORT}/api/deletion-webhook"
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "relay_messages.db")
 
 logger.info(f"Using database path: {DB_PATH}")
@@ -214,17 +215,14 @@ async def main():
     except Exception as e:
         logger.error(f"Cannot access group: {e}")
     
-    # Pre-resolve peers to avoid errors
-    logger.info("Pre-resolving peer information...")
+    # Pre-resolve only the monitored group's peer
+    logger.info("Pre-resolving monitored group peer...")
     try:
-        async for dialog in app.get_dialogs(limit=100):
-            try:
-                # Just accessing the dialog pre-resolves the peer
-                logger.debug(f"Resolved peer: {dialog.chat.title if dialog.chat.title else dialog.chat.id}")
-            except Exception as e:
-                logger.debug(f"Could not resolve peer: {e}")
+        # Only resolve the specific group we're monitoring
+        await app.resolve_peer(GROUP_ID)
+        logger.debug(f"Resolved monitored group peer: {GROUP_ID}")
     except Exception as e:
-        logger.debug(f"Error pre-resolving peers: {e}")
+        logger.debug(f"Error pre-resolving monitored group peer: {e}")
     
     # Start periodic check
     asyncio.create_task(periodic_check())

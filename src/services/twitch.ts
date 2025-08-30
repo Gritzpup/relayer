@@ -19,7 +19,8 @@ export class TwitchService implements PlatformService {
   platform = Platform.Twitch;
   private client: tmi.Client;
   private messageHandler?: MessageHandler;
-  private deleteHandler?: DeleteHandler;
+  // @ts-ignore - Kept for interface consistency, Twitch doesn't support deletion detection yet
+  private _deleteHandler?: DeleteHandler;
   private reconnectManager: ReconnectManager;
   private isConnecting: boolean = false;
   private recentMessages: Map<string, RecentMessage> = new Map(); // Key: author (lowercase)
@@ -212,14 +213,9 @@ export class TwitchService implements PlatformService {
       // Validate the token and set up API
       const isValid = await this.api.validateToken();
       if (isValid) {
-        logger.info('Twitch API token validated successfully');
         const hasScopes = await this.api.hasRequiredScopes();
         if (hasScopes) {
-          logger.info('Twitch token has required scopes for Chat API');
           const hasDeletionScope = await this.api.hasModeratorScope();
-          if (hasDeletionScope) {
-            logger.info('Twitch token has moderator:manage:chat_messages scope for message deletion');
-          }
           this.useApi = true;
           logger.info('Twitch Chat API enabled - messages will be sent via API');
         } else {
@@ -236,12 +232,11 @@ export class TwitchService implements PlatformService {
         if (this.api) {
           this.api.updateToken(newToken);
           logger.info('Twitch API token updated from token manager');
-          // Re-validate after update
+          // Re-validate after update (silently)
           const isValid = await this.api.validateToken();
           if (isValid) {
             const hasScopes = await this.api.hasRequiredScopes();
             this.useApi = hasScopes;
-            logger.info(`Twitch API re-validated after token refresh. API enabled: ${this.useApi}`);
           }
         }
         // Also update TMI client
@@ -552,7 +547,7 @@ export class TwitchService implements PlatformService {
   }
 
   onDelete(handler: DeleteHandler): void {
-    this.deleteHandler = handler;
+    this._deleteHandler = handler;
   }
 
   getStatus(): ServiceStatus {
@@ -569,14 +564,33 @@ export class TwitchService implements PlatformService {
     // Store this message in recent messages for future reply detection
     this.storeRecentMessage(id, author, message, timestamp);
     
+    // Convert any Unicode bold characters in the message to normal text for processing
+    const normalizedMessage = this.fromUnicodeBold(message);
+    if (normalizedMessage !== message) {
+      logger.info(`CONVERT MSG: Normalized Unicode bold: "${normalizedMessage.substring(0, 30)}..."`);
+    }
+    
     // Check if this message is a reply (starts with @username)
     let replyTo: RelayMessage['replyTo'] | undefined;
-    let actualContent = message;
+    let actualContent = message; // Keep original message for display
     
-    const mentionMatch = message.match(/^@(\w+):?\s*(.*)$/);
+    const mentionMatch = normalizedMessage.match(/^@(\w+):?\s*(.*)$/);
     if (mentionMatch) {
       const mentionedUser = mentionMatch[1].toLowerCase();
-      actualContent = mentionMatch[2] || ''; // Remove the @mention from the content
+      // Extract content from the original message to preserve formatting
+      const mentionStartInOriginal = message.indexOf('@');
+      const colonIndex = message.indexOf(':', mentionStartInOriginal);
+      if (colonIndex > -1) {
+        actualContent = message.substring(colonIndex + 1).trim();
+      } else {
+        // No colon, extract based on space after username
+        const spaceMatch = normalizedMessage.match(/^@\w+\s+(.*)$/);
+        if (spaceMatch) {
+          actualContent = mentionMatch[2] || '';
+        } else {
+          actualContent = mentionMatch[2] || '';
+        }
+      }
       
       // If the content is empty after removing mention, use the full message
       if (!actualContent.trim()) {
@@ -603,7 +617,7 @@ export class TwitchService implements PlatformService {
         let mostRecentRelayed: RecentMessage | undefined;
         const currentTime = timestamp.getTime();
         
-        for (const [key, msg] of this.recentMessages.entries()) {
+        for (const [_key, msg] of this.recentMessages.entries()) {
           // Skip if it's too old
           const timeDiff = currentTime - msg.timestamp.getTime();
           if (timeDiff > 5 * 60 * 1000) {
@@ -631,28 +645,27 @@ export class TwitchService implements PlatformService {
           logger.debug(`No recent relayed messages found for bot reply`);
         }
       } else {
-        // Look for recent message from mentioned user
-        recentMessage = this.recentMessages.get(mentionedUser);
+        // Look for recent message from mentioned user (case-insensitive)
+        const mentionedUserLower = mentionedUser.toLowerCase();
+        logger.info(`REPLY DETECTION: Looking for user "${mentionedUserLower}" in stored messages`);
+        
+        // Direct lookup with lowercase key (primary lookup)
+        recentMessage = this.recentMessages.get(mentionedUserLower);
         
         if (recentMessage) {
-          logger.info(`Found direct message from ${mentionedUser}`);
+          logger.info(`REPLY DETECTION: Found direct message from ${mentionedUserLower} -> ${recentMessage.author}`);
         } else {
-          // If not found directly, search all messages case-insensitively
-          logger.debug(`No direct message found from ${mentionedUser}, searching all messages`);
-          
-          // Search through all recent messages
-          for (const [key, msg] of this.recentMessages.entries()) {
-            // Skip if it's too old
-            const timeDiff = timestamp.getTime() - msg.timestamp.getTime();
-            if (timeDiff > 5 * 60 * 1000) continue; // Skip messages older than 5 minutes
-            
-            // Check if this message author matches (case insensitive)
-            logger.info(`DIRECT REPLY CHECK: Comparing author "${msg.author.toLowerCase()}" with mentioned "${mentionedUser}"`);
-            if (msg.author.toLowerCase() === mentionedUser) {
-              recentMessage = msg;
-              logger.info(`DIRECT REPLY: Found message from ${msg.author} (matched ${mentionedUser}) with key ${key}, platform=${msg.platform || 'Twitch'}`);
-              break;
+          // Also try the exact username as typed (in case it was stored with original case)
+          const mentionedUserFromNormalized = normalizedMessage.match(/^@(\w+)/)?.[1];
+          if (mentionedUserFromNormalized && mentionedUserFromNormalized !== mentionedUserLower) {
+            recentMessage = this.recentMessages.get(mentionedUserFromNormalized);
+            if (recentMessage) {
+              logger.info(`REPLY DETECTION: Found message with original case key: ${mentionedUserFromNormalized}`);
             }
+          }
+          
+          if (!recentMessage) {
+            logger.info(`REPLY DETECTION: No message found for @${mentionedUser} (tried keys: ${mentionedUserLower}${mentionedUserFromNormalized ? ', ' + mentionedUserFromNormalized : ''})`);
           }
         }
       }
@@ -702,22 +715,50 @@ export class TwitchService implements PlatformService {
   }
 
   private storeRecentMessage(id: string, author: string, content: string, timestamp: Date, platform?: Platform, mappingId?: string): void {
-    const authorKey = author.toLowerCase();
-    logger.info(`STORE MESSAGE: Storing with key="${authorKey}" author="${author}" content="${content.substring(0, 50)}..."${platform ? ` from platform=${platform}` : ''}`);
-    this.recentMessages.set(authorKey, { id, author, content, timestamp, platform, mappingId });
+    const authorLower = author.toLowerCase();
+    const messageData = { id, author, content, timestamp, platform, mappingId };
+    const storedKeys: string[] = [];
+    
+    // Store with lowercase key (primary)
+    this.recentMessages.set(authorLower, messageData);
+    storedKeys.push(authorLower);
+    
+    // Also store with original case if different
+    if (author !== authorLower) {
+      this.recentMessages.set(author, messageData);
+      storedKeys.push(author);
+    }
+    
+    // If from another platform (relayed message), also store with bot's username
+    // This helps when users reply to bot messages instead of mentioning the original author
+    if (platform && platform !== Platform.Twitch) {
+      const botKey = config.twitch.username.toLowerCase();
+      this.recentMessages.set(botKey, messageData);
+      storedKeys.push(botKey);
+    }
+    
+    logger.info(`STORE MESSAGE: Stored with keys=[${storedKeys.join(', ')}] author="${author}" content="${content.substring(0, 50)}..."${platform ? ` from platform=${platform}` : ''}`);
     logger.info(`STORE MESSAGE: Map size after store: ${this.recentMessages.size}`);
     
     // Clean up old messages (older than 10 minutes)
     const cutoffTime = timestamp.getTime() - 10 * 60 * 1000;
     let deletedCount = 0;
+    const keysToDelete: string[] = [];
+    
     for (const [key, msg] of this.recentMessages.entries()) {
       if (msg.timestamp.getTime() < cutoffTime) {
-        this.recentMessages.delete(key);
-        deletedCount++;
+        keysToDelete.push(key);
       }
     }
+    
+    // Delete old messages
+    for (const key of keysToDelete) {
+      this.recentMessages.delete(key);
+      deletedCount++;
+    }
+    
     if (deletedCount > 0) {
-      logger.info(`STORE MESSAGE: Cleaned up ${deletedCount} old messages`);
+      logger.info(`STORE MESSAGE: Cleaned up ${deletedCount} old message entries`);
     }
   }
 }

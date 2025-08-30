@@ -4,6 +4,7 @@ const { spawn, execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
+const net = require('net');
 
 const DELETION_DETECTOR_DIR = path.join(__dirname, '..', 'deletion_detector');
 const SESSION_FILE = path.join(DELETION_DETECTOR_DIR, 'sessions', 'deletion_detector.session');
@@ -21,6 +22,94 @@ const colors = {
 
 function log(message, color = '') {
   console.log(`${color}${message}${colors.reset}`);
+}
+
+function getRandomPort(min = 5000, max = 9000) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+async function findAvailablePort() {
+  let port;
+  let attempts = 0;
+  const maxAttempts = 50;
+  
+  while (attempts < maxAttempts) {
+    port = getRandomPort();
+    const isAvailable = await new Promise((resolve) => {
+      const server = net.createServer();
+      server.once('error', () => resolve(false));
+      server.once('listening', () => {
+        server.close();
+        resolve(true);
+      });
+      server.listen(port);
+    });
+    
+    if (isAvailable) {
+      return port;
+    }
+    attempts++;
+  }
+  
+  throw new Error('Could not find an available port after 50 attempts');
+}
+
+function killExistingProcesses() {
+  log('🔄 Checking for existing processes...', colors.yellow);
+  
+  try {
+    // Kill any existing Node processes running the relay
+    const psOutput = execSync("ps aux | grep -E 'tsx.*src/index\\.ts|node.*relay|deletion_detector/bot\\.py' | grep -v grep | awk '{print $2}'", {
+      encoding: 'utf8'
+    }).trim();
+    
+    if (psOutput) {
+      const pids = psOutput.split('\n').filter(pid => pid);
+      if (pids.length > 0) {
+        log(`Found ${pids.length} existing process(es), terminating...`, colors.yellow);
+        pids.forEach(pid => {
+          try {
+            process.kill(parseInt(pid), 'SIGTERM');
+          } catch (e) {
+            // Process might have already exited
+          }
+        });
+        
+        // Give processes time to terminate gracefully
+        execSync('sleep 2');
+        
+        // Force kill any remaining processes
+        pids.forEach(pid => {
+          try {
+            process.kill(parseInt(pid), 'SIGKILL');
+          } catch (e) {
+            // Process might have already exited
+          }
+        });
+        
+        log('✅ Existing processes terminated', colors.green);
+      }
+    }
+  } catch (error) {
+    // No processes found or error in ps command - that's fine
+  }
+  
+  // Clean up any locked database files
+  try {
+    const sessionFiles = [
+      path.join(DELETION_DETECTOR_DIR, 'sessions', 'deletion_detector.session'),
+      path.join(DELETION_DETECTOR_DIR, 'sessions', 'deletion_detector.session-journal')
+    ];
+    
+    sessionFiles.forEach(file => {
+      if (fs.existsSync(file + '-journal')) {
+        fs.unlinkSync(file + '-journal');
+        log(`Cleaned up locked database journal: ${path.basename(file)}-journal`, colors.cyan);
+      }
+    });
+  } catch (error) {
+    // Ignore errors in cleanup
+  }
 }
 
 async function checkAndSetupDeletionDetector() {
@@ -114,11 +203,23 @@ async function checkAndSetupDeletionDetector() {
 
 async function startServices() {
   log('\n🚀 Starting services...', colors.bright);
+  
+  // Find an available random port
+  const port = await findAvailablePort();
+  log(`📡 Using port ${port} for webhook server`, colors.cyan);
+  
+  // Set the port as an environment variable
+  process.env.WEBHOOK_PORT = port;
 
-  // Start deletion detector in background
+  // Start deletion detector in background with the new port
   const deletionDetector = spawn('./venv/bin/python', ['bot.py'], {
     cwd: DELETION_DETECTOR_DIR,
-    stdio: ['ignore', 'pipe', 'pipe']
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      WEBHOOK_PORT: port.toString(),
+      WEBHOOK_URL: `http://localhost:${port}/api/deletion-webhook`
+    }
   });
 
   deletionDetector.stdout.on('data', (data) => {
@@ -136,10 +237,14 @@ async function startServices() {
   // Give deletion detector a moment to start
   await new Promise(resolve => setTimeout(resolve, 2000));
 
-  // Start main relay bot with tsx watch
+  // Start main relay bot with tsx watch and the new port
   const relayBot = spawn('npx', ['tsx', 'watch', 'src/index.ts'], {
     stdio: 'inherit',
-    shell: true
+    shell: true,
+    env: {
+      ...process.env,
+      WEBHOOK_PORT: port.toString()
+    }
   });
 
   // Handle process termination
@@ -201,6 +306,9 @@ async function main() {
   log('=' .repeat(50), colors.cyan);
 
   try {
+    // Kill any existing processes first
+    killExistingProcesses();
+    
     await checkAndSetupDeletionDetector();
     await startServices();
   } catch (error) {

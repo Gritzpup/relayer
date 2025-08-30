@@ -418,11 +418,14 @@ export class DiscordService implements PlatformService {
       channelMappings[name].discord === message.channel.id
     );
     
+    // Resolve Discord mentions to readable format
+    const resolvedContent = await this.resolveMentions(message);
+    
     return {
       id: message.id,
       platform: Platform.Discord,
       author: message.author.username,
-      content: message.content,
+      content: resolvedContent,
       timestamp: message.createdAt,
       attachments: attachments.length > 0 ? attachments : undefined,
       replyTo,
@@ -509,5 +512,109 @@ export class DiscordService implements PlatformService {
     
     logger.info(`Total custom emojis found: ${emojis.length}`);
     return emojis;
+  }
+
+  private async resolveMentions(message: Message): Promise<string> {
+    let content = message.content;
+    
+    if (!content) return content;
+    
+    try {
+      // Resolve user mentions <@userId> or <@!userId> 
+      const userMentionRegex = /<@!?(\d+)>/g;
+      const userMentions = content.match(userMentionRegex);
+      
+      if (userMentions) {
+        for (const mention of userMentions) {
+          const userId = mention.replace(/<@!?/, '').replace('>', '');
+          try {
+            // Try to get user from cache first
+            let user = this.client.users.cache.get(userId);
+            
+            // If not in cache, try to fetch
+            if (!user && message.guild) {
+              const member = await message.guild.members.fetch(userId).catch(() => null);
+              user = member?.user;
+            }
+            
+            if (user) {
+              // Replace mention with @username
+              content = content.replace(mention, `@${user.username}`);
+              logger.debug(`Resolved user mention ${mention} to @${user.username}`);
+            } else {
+              // If user not found, just show @unknown
+              content = content.replace(mention, '@unknown');
+              logger.debug(`Could not resolve user mention ${mention}`);
+            }
+          } catch (error) {
+            logger.debug(`Error resolving user mention ${mention}: ${error}`);
+            content = content.replace(mention, '@unknown');
+          }
+        }
+      }
+      
+      // Resolve role mentions <@&roleId>
+      const roleMentionRegex = /<@&(\d+)>/g;
+      const roleMentions = content.match(roleMentionRegex);
+      
+      if (roleMentions && message.guild) {
+        for (const mention of roleMentions) {
+          const roleId = mention.replace('<@&', '').replace('>', '');
+          try {
+            const role = message.guild.roles.cache.get(roleId);
+            
+            if (role) {
+              // Replace mention with @rolename
+              content = content.replace(mention, `@${role.name}`);
+              logger.debug(`Resolved role mention ${mention} to @${role.name}`);
+            } else {
+              // If role not found, just show @role
+              content = content.replace(mention, '@role');
+              logger.debug(`Could not resolve role mention ${mention}`);
+            }
+          } catch (error) {
+            logger.debug(`Error resolving role mention ${mention}: ${error}`);
+            content = content.replace(mention, '@role');
+          }
+        }
+      }
+      
+      // Resolve channel mentions <#channelId>
+      const channelMentionRegex = /<#(\d+)>/g;
+      const channelMentions = content.match(channelMentionRegex);
+      
+      if (channelMentions) {
+        for (const mention of channelMentions) {
+          const channelId = mention.replace('<#', '').replace('>', '');
+          try {
+            const channel = this.client.channels.cache.get(channelId);
+            
+            if (channel && 'name' in channel) {
+              // Replace mention with #channelname
+              content = content.replace(mention, `#${channel.name}`);
+              logger.debug(`Resolved channel mention ${mention} to #${channel.name}`);
+            } else {
+              // If channel not found, just show #channel
+              content = content.replace(mention, '#channel');
+              logger.debug(`Could not resolve channel mention ${mention}`);
+            }
+          } catch (error) {
+            logger.debug(`Error resolving channel mention ${mention}: ${error}`);
+            content = content.replace(mention, '#channel');
+          }
+        }
+      }
+      
+      // Resolve @everyone and @here
+      content = content.replace(/@everyone/g, '@everyone');
+      content = content.replace(/@here/g, '@here');
+      
+    } catch (error) {
+      logger.error('Error resolving mentions:', error);
+      // Return original content if there's an error
+      return message.content;
+    }
+    
+    return content;
   }
 }

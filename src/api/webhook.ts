@@ -13,7 +13,7 @@ export function setRelayManager(manager: any) {
   relayManagerInstance = manager;
 }
 
-router.post('/deletion-webhook', async (req, res) => {
+router.post('/deletion-webhook', async (req, res): Promise<void> => {
   logger.info(`=== DELETION WEBHOOK RECEIVED ===`);
   logger.info(`Request body:`, JSON.stringify(req.body));
   logger.info(`Headers:`, req.headers);
@@ -25,7 +25,8 @@ router.post('/deletion-webhook', async (req, res) => {
   try {
     if (!mapping_id) {
       logger.error('No mapping_id provided in deletion webhook');
-      return res.status(400).json({ success: false, error: 'mapping_id required' });
+      res.status(400).json({ success: false, error: 'mapping_id required' });
+      return;
     }
     
     // Publish deletion event via Redis pub/sub
@@ -52,23 +53,25 @@ router.post('/deletion-webhook', async (req, res) => {
 });
 
 // Health check endpoint
-router.get('/health', (req, res) => {
+router.get('/health', (_req, res) => {
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 // Test deletion endpoint (for debugging)
-router.post('/test-deletion', async (req, res) => {
+router.post('/test-deletion', async (req, res): Promise<void> => {
   logger.info('Test deletion endpoint called');
   const { messageId } = req.body;
   
   if (!messageId) {
-    return res.status(400).json({ error: 'messageId required' });
+    res.status(400).json({ error: 'messageId required' });
+    return;
   }
   
   // Find mapping by Telegram message ID
   const db = messageDb.db;
   if (!db) {
-    return res.status(500).json({ error: 'Database not initialized' });
+    res.status(500).json({ error: 'Database not initialized' });
+    return;
   }
   
   try {

@@ -83,13 +83,13 @@ export class MessageMapper {
           }
         } else {
           // Not a reply to a bot message - do standard lookup
-          logger.info(`REPLY CREATE: Looking for mapping of reply-to message ${replyToMessageId} on ${originalPlatform}`);
+          logger.info(`REPLY CREATE: Looking for mapping of reply-to message ${replyToMessageId} on ${originalPlatform} at ${new Date().toISOString()}`);
           replyToMapping = await this.getMappingIdByPlatformMessage(originalPlatform, replyToMessageId);
           
           if (replyToMapping) {
-            logger.info(`REPLY CREATE: Found reply to message: ${replyToMessageId} maps to mapping ${replyToMapping}`);
+            logger.info(`REPLY CREATE: Found reply to message: ${replyToMessageId} maps to mapping ${replyToMapping} at ${new Date().toISOString()}`);
           } else {
-            logger.info(`REPLY CREATE: No mapping found for platform message ${originalPlatform}:${replyToMessageId}`);
+            logger.info(`REPLY CREATE: No mapping found for platform message ${originalPlatform}:${replyToMessageId} at ${new Date().toISOString()}`);
             
             // If still not found, try to find a mapping by content match (for native messages)
             if (replyToContent && replyToAuthor) {
@@ -165,6 +165,9 @@ export class MessageMapper {
    * Add a platform message ID to an existing mapping
    */
   async addPlatformMessage(mappingId: string, platform: Platform, messageId: string): Promise<void> {
+    const startTime = Date.now();
+    logger.debug(`addPlatformMessage: Starting - mapping=${mappingId}, platform=${platform}, messageId=${messageId}`);
+    
     // Get existing mapping from Redis
     const mapping = await getMessageMapping(this.MAPPING_PREFIX + mappingId);
     if (!mapping) {
@@ -172,16 +175,25 @@ export class MessageMapper {
       return;
     }
     
+    // Check if this platform message already exists (avoid overwriting)
+    if (mapping.platformMessages[platform] && mapping.platformMessages[platform] !== messageId) {
+      logger.warn(`Platform message already exists for ${platform} in mapping ${mappingId}: existing=${mapping.platformMessages[platform]}, new=${messageId}`);
+    }
+    
     // Update the mapping
     mapping.platformMessages[platform] = messageId;
-    await setMessageMapping(this.MAPPING_PREFIX + mappingId, mapping, this.MAPPING_TTL);
     
-    // Create reverse lookup
-    await setMessageMapping(
-      this.PLATFORM_PREFIX + platform + ':' + messageId,
-      mappingId,
-      this.MAPPING_TTL
-    );
+    // Save both the mapping and reverse lookup atomically
+    const savePromises = [
+      setMessageMapping(this.MAPPING_PREFIX + mappingId, mapping, this.MAPPING_TTL),
+      setMessageMapping(
+        this.PLATFORM_PREFIX + platform + ':' + messageId,
+        mappingId,
+        this.MAPPING_TTL
+      )
+    ];
+    
+    await Promise.all(savePromises);
     
     // Async update database (don't await)
     messageDb.trackPlatformMessage({
@@ -190,7 +202,8 @@ export class MessageMapper {
       messageId
     }).catch(err => logger.error('Failed to track platform message in database:', err));
     
-    logger.info(`PLATFORM MESSAGE: Added ${platform} message ${messageId} to mapping ${mappingId}`);
+    const elapsed = Date.now() - startTime;
+    logger.info(`PLATFORM MESSAGE: Added ${platform} message ${messageId} to mapping ${mappingId} (took ${elapsed}ms)`);
   }
 
   /**
@@ -264,16 +277,26 @@ export class MessageMapper {
    * Get a mapping ID by platform and message ID
    */
   async getMappingIdByPlatformMessage(platform: Platform, messageId: string): Promise<string | undefined> {
-    const mappingId = await getMessageMapping(this.PLATFORM_PREFIX + platform + ':' + messageId);
-    if (mappingId) return mappingId;
+    const lookupKey = this.PLATFORM_PREFIX + platform + ':' + messageId;
+    logger.debug(`getMappingIdByPlatformMessage: Looking up ${lookupKey}`);
     
+    const mappingId = await getMessageMapping(lookupKey);
+    if (mappingId) {
+      logger.debug(`getMappingIdByPlatformMessage: Found in Redis - ${platform}:${messageId} -> ${mappingId}`);
+      return mappingId;
+    }
+    
+    logger.debug(`getMappingIdByPlatformMessage: Not in Redis, checking database for ${platform}:${messageId}`);
     // Fallback to database
     const mapping = await messageDb.getMappingByPlatformMessage(platform, messageId);
     if (mapping) {
+      logger.debug(`getMappingIdByPlatformMessage: Found in database - ${platform}:${messageId} -> ${mapping.id}`);
       // Restore to Redis for future lookups
       await this.restoreToRedis(mapping as MessageMapping);
       return mapping.id;
     }
+    
+    logger.debug(`getMappingIdByPlatformMessage: Not found anywhere - ${platform}:${messageId}`);
     return undefined;
   }
 
