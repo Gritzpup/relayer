@@ -47,32 +47,37 @@ app = Client(
 message_cache = {}
 
 def get_db():
-    """Get database connection with proper timeout"""
+    """Get database connection with proper timeout and WAL mode"""
     conn = sqlite3.connect(DB_PATH, timeout=30.0)
-    try:
-        conn.execute("PRAGMA journal_mode=WAL")
-    except:
-        pass
+    # Set WAL mode and busy timeout for better concurrency
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")  # 5 second busy timeout
+    conn.execute("PRAGMA synchronous=NORMAL")  # Better performance with WAL
     return conn
 
 # Message handler - using decorator
 @app.on_message(filters.chat(GROUP_ID))
 async def track_message(client: Client, message: Message):
-    """Track all messages in the group"""
+    """Track ALL messages in the group including bot messages"""
     username = message.from_user.username if message.from_user else 'Unknown'
     user_id = message.from_user.id if message.from_user else 'Unknown'
-    logger.info(f"[TRACKING] Message {message.id} from @{username} (ID: {user_id})")
+    is_bot = message.from_user.is_bot if message.from_user else False
+    
+    logger.info(f"[TRACKING] Message {message.id} from @{username} (ID: {user_id}, Bot: {is_bot})")
     logger.info(f"[TRACKING] Content: {(message.text or message.caption or '[Media]')[:50]}...")
     
-    # Store in cache
+    # Store ALL messages in cache, including bot messages
     message_cache[message.id] = {
         'chat_id': message.chat.id,
         'timestamp': datetime.now(),
         'username': username,
-        'content': (message.text or message.caption or '[Media]')[:50]
+        'user_id': user_id,
+        'content': (message.text or message.caption or '[Media]')[:50],
+        'is_bot': is_bot,  # Track if it's a bot message
+        'is_own': message.from_user and message.from_user.is_self
     }
     
-    logger.info(f"Cached message {message.id} (cache size: {len(message_cache)})")
+    logger.info(f"Cached message {message.id} (cache size: {len(message_cache)}, bot: {is_bot})")
 
 # Deletion handler - using decorator  
 @app.on_deleted_messages(filters.chat(GROUP_ID))
@@ -80,6 +85,7 @@ async def handle_deleted_messages(client: Client, messages):
     """Handle message deletion events"""
     logger.info(f"=== DELETION DETECTED ===")
     logger.info(f"Deleted {len(messages)} messages: {[msg.id for msg in messages]}")
+    logger.info(f"Detection method: {'Event' if client else 'Periodic Check'}")
     
     db = get_db()
     cursor = db.cursor()
@@ -134,7 +140,7 @@ async def periodic_check():
     check_count = 0
     
     while True:
-        await asyncio.sleep(30)
+        await asyncio.sleep(15)  # Check more frequently (every 15 seconds instead of 30)
         check_count += 1
         
         try:
@@ -142,22 +148,37 @@ async def periodic_check():
             current_time = datetime.now()
             messages_to_check = []
             
-            # Check messages older than 10 seconds
+            # Check messages with different timing based on type
             for msg_id, msg_data in list(message_cache.items()):
                 msg_age = (current_time - msg_data['timestamp']).total_seconds()
-                if msg_age > 10 and msg_age < 3600:
-                    messages_to_check.append((msg_id, msg_data['chat_id']))
+                is_bot = msg_data.get('is_bot', False)
+                is_own = msg_data.get('is_own', False)
+                
+                # Check bot messages (relayed messages) more aggressively (after 3 seconds)
+                # Check own messages after 5 seconds
+                # Check other messages after 10 seconds
+                if is_bot:
+                    min_age = 3  # Bot messages checked very quickly
+                elif is_own:
+                    min_age = 5  # Own messages checked quickly
+                else:
+                    min_age = 10  # Other messages normal timing
+                
+                if msg_age > min_age and msg_age < 3600:
+                    messages_to_check.append((msg_id, msg_data['chat_id'], is_bot))
             
-            logger.info(f"Checking {len(messages_to_check)} messages for deletion")
+            if messages_to_check:
+                bot_msg_count = sum(1 for _, _, is_bot in messages_to_check if is_bot)
+                logger.info(f"Checking {len(messages_to_check)} messages for deletion (including {bot_msg_count} bot messages)")
             
-            for msg_id, chat_id in messages_to_check[:50]:  # Limit to 50
+            for msg_id, chat_id, is_bot in messages_to_check[:50]:  # Limit to 50
                 try:
                     # Get single message
                     msg = await app.get_messages(chat_id, msg_id)
                     
                     # Check if message was deleted
                     if msg is None or msg.empty:
-                        logger.info(f"Message {msg_id} was deleted")
+                        logger.info(f"Message {msg_id} was deleted (bot message: {is_bot})")
                         # Create deleted message object
                         class DeletedMsg:
                             def __init__(self, id):
@@ -180,6 +201,22 @@ async def periodic_check():
 async def handle_private(client: Client, message: Message):
     """Handle private messages to avoid unhandled updates"""
     logger.debug(f"Received private message from {message.from_user.first_name if message.from_user else 'Unknown'}")
+    
+    # Add test command for manual deletion trigger
+    if message.text and message.text.startswith("/testdelete "):
+        try:
+            msg_id = int(message.text.split()[1])
+            logger.info(f"Manual deletion test for message {msg_id}")
+            
+            # Create deleted message object
+            class DeletedMsg:
+                def __init__(self, id):
+                    self.id = id
+            
+            await handle_deleted_messages(None, [DeletedMsg(msg_id)])
+            await message.reply("Deletion event triggered")
+        except (ValueError, IndexError):
+            await message.reply("Usage: /testdelete <message_id>")
 
 # Catch-all handler for other groups to prevent unhandled updates
 @app.on_message(~filters.chat(GROUP_ID) & filters.group)
@@ -200,8 +237,26 @@ async def main():
     logger.info(f"Webhook URL: {WEBHOOK_URL}")
     logger.info("="*60)
     
-    # Start the client
-    await app.start()
+    # Add a small delay to avoid startup conflicts with other SQLite databases
+    await asyncio.sleep(1)
+    
+    # Start the client with retry logic for database lock issues
+    max_retries = 3
+    retry_delay = 2
+    
+    for attempt in range(max_retries):
+        try:
+            await app.start()
+            logger.info("Successfully started Pyrogram client")
+            break
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e) and attempt < max_retries - 1:
+                logger.warning(f"Database locked, retrying in {retry_delay} seconds... (attempt {attempt + 1}/{max_retries})")
+                await asyncio.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+            else:
+                logger.error(f"Failed to start client after {max_retries} attempts")
+                raise
     
     # Get session info
     me = await app.get_me()

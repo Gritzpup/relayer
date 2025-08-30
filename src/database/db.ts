@@ -36,6 +36,8 @@ export class MessageDatabase {
       // Enable foreign keys and WAL mode for better concurrency
       await this.db.run('PRAGMA foreign_keys = ON');
       await this.db.run('PRAGMA journal_mode = WAL');
+      await this.db.run('PRAGMA busy_timeout = 5000'); // 5 second busy timeout
+      await this.db.run('PRAGMA synchronous = NORMAL'); // Better performance with WAL
 
       // Create tables from schema
       const schemaPath = join(__dirname, 'schema.sql');

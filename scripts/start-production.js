@@ -205,8 +205,9 @@ async function startServices() {
     log(`❌ Failed to start deletion detector: ${error.message}`, colors.red);
   });
 
-  // Give deletion detector a moment to start
-  await new Promise(resolve => setTimeout(resolve, 2000));
+  // Give deletion detector time to initialize its SQLite databases
+  // This prevents database lock conflicts during startup
+  await new Promise(resolve => setTimeout(resolve, 3000));
 
   // Start main relay bot WITHOUT watch mode for production
   log('Starting relay service (production mode - no auto-restart)...', colors.cyan);
