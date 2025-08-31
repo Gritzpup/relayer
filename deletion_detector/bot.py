@@ -15,13 +15,13 @@ load_dotenv()
 
 # Configure logging
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.WARNING,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Enable Pyrogram logs
-logging.getLogger("pyrogram").setLevel(logging.INFO)
+# Reduce Pyrogram logs
+logging.getLogger("pyrogram").setLevel(logging.WARNING)
 
 # Configuration
 API_ID = os.getenv("TELEGRAM_API_ID")
