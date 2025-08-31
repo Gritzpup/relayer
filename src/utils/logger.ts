@@ -1,10 +1,41 @@
 import winston from 'winston';
 import DailyRotateFile from 'winston-daily-rotate-file';
 import path from 'path';
+import fs from 'fs';
 import { config } from '../config';
 
 // Create logs directory if it doesn't exist
 const logsDir = path.join(process.cwd(), 'logs');
+
+// Clean up old logs on startup
+const cleanupOldLogs = () => {
+  try {
+    if (!fs.existsSync(logsDir)) {
+      fs.mkdirSync(logsDir, { recursive: true });
+      return;
+    }
+    
+    const files = fs.readdirSync(logsDir);
+    const now = Date.now();
+    const threeDaysAgo = now - (3 * 24 * 60 * 60 * 1000);
+    
+    files.forEach(file => {
+      const filePath = path.join(logsDir, file);
+      const stats = fs.statSync(filePath);
+      
+      // Delete files older than 3 days or larger than 10MB
+      if (stats.mtime.getTime() < threeDaysAgo || stats.size > 10 * 1024 * 1024) {
+        fs.unlinkSync(filePath);
+        console.log(`Cleaned up old/large log file: ${file}`);
+      }
+    });
+  } catch (error) {
+    // Ignore cleanup errors
+  }
+};
+
+// Run cleanup on startup
+cleanupOldLogs();
 
 // Custom format that safely handles errors
 const safeFormat = winston.format.printf(({ timestamp, level, message, ...meta }) => {
@@ -19,18 +50,20 @@ const safeFormat = winston.format.printf(({ timestamp, level, message, ...meta }
   return logMessage;
 });
 
-// Create transport with better error handling
+// Create transport with better error handling and strict limits
 const createTransport = (filename: string, level?: string) => {
   return new DailyRotateFile({
     dirname: logsDir,
     filename: `${filename}-%DATE%.log`,
     datePattern: 'YYYY-MM-DD',
-    maxSize: config.logging.maxSize || '20m',
-    maxFiles: config.logging.maxFiles || '14d',
-    level: level || config.logging.level || 'info',
+    maxSize: '5m',  // Max 5MB per file (was 20m)
+    maxFiles: '3d',  // Keep only 3 days of logs (was 14d)
+    level: level || config.logging.level || 'warn',  // Default to warn instead of info
     handleExceptions: true,
     handleRejections: true,
     silent: false,
+    auditFile: path.join(logsDir, `.${filename}-audit.json`),
+    zippedArchive: true,  // Compress old logs
   });
 };
 
@@ -41,23 +74,30 @@ const createConsoleTransport = () => {
       winston.format.colorize(),
       winston.format.simple()
     ),
-    level: config.logging.level || 'info',
+    level: config.logging.level || 'warn',  // Only show warnings and errors in console
     handleExceptions: true,
     handleRejections: true,
+    silent: process.env.NODE_ENV === 'production',  // Silent in production
   });
 
   // Override write method to handle EPIPE errors
   const originalWrite = consoleTransport.log.bind(consoleTransport);
   consoleTransport.log = (info: any, callback: Function) => {
     try {
-      originalWrite(info, callback);
+      originalWrite(info, (err?: Error) => {
+        // Silently ignore EPIPE and write-after-end errors
+        if (err && err.message && (err.message.includes('EPIPE') || err.message.includes('write after end'))) {
+          if (callback) callback();
+          return;
+        }
+        if (callback) callback(err);
+      });
     } catch (error: any) {
-      if (error.code === 'EPIPE') {
+      if (error.code === 'EPIPE' || error.message?.includes('EPIPE') || error.message?.includes('write after end')) {
         // Silently ignore EPIPE errors
         if (callback) callback();
-      } else {
-        // Re-throw other errors
-        throw error;
+      } else if (callback) {
+        callback(error);
       }
     }
   };
@@ -74,7 +114,7 @@ export const logger = winston.createLogger({
   ),
   transports: [
     createConsoleTransport(),
-    createTransport('relay'),
+    createTransport('relay', 'error'),  // Only log errors to file
     createTransport('error', 'error'),
   ],
   // Prevent exit on error
@@ -82,17 +122,27 @@ export const logger = winston.createLogger({
 });
 
 // Handle uncaught exceptions and rejections more gracefully
+let isShuttingDown = false;
 process.on('uncaughtException', (error: Error) => {
-  if (error.message && error.message.includes('EPIPE')) {
-    // Silently ignore EPIPE errors
+  // Prevent recursive errors during shutdown
+  if (isShuttingDown) {
     return;
   }
   
+  if (error.message && (error.message.includes('EPIPE') || error.message.includes('write after end'))) {
+    // Silently ignore EPIPE and write-after-end errors
+    return;
+  }
+  
+  // Set flag to prevent recursive logging attempts
+  isShuttingDown = true;
+  
   try {
-    logger.error('Uncaught exception:', error);
+    // Use console directly to avoid logger recursion
+    console.error('Uncaught exception:', error.message);
+    console.error(error.stack);
   } catch (e) {
-    // If logger fails, use console as fallback
-    console.error('Uncaught exception:', error);
+    // Even console might fail, just ignore
   }
   
   // Don't exit immediately - give time to clean up
@@ -148,14 +198,19 @@ export const logDebug = (message: string, meta?: any) => {
   }
 };
 
-// Platform message logging for tracking
+// Platform message logging for tracking - only log in debug mode
 export const logPlatformMessage = (platform: string, direction: 'in' | 'out', message: string, user?: string) => {
+  // Skip platform messages unless in debug mode
+  if (process.env.LOG_LEVEL !== 'debug' && config.logging.level !== 'debug') {
+    return;
+  }
+  
   const prefix = direction === 'in' ? '←' : '→';
   const userInfo = user ? ` [${user}]` : '';
   try {
-    logger.info(`${prefix} ${platform}${userInfo}: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`);
+    logger.debug(`${prefix} ${platform}${userInfo}: ${message.substring(0, 50)}${message.length > 50 ? '...' : ''}`);
   } catch (e) {
-    console.log(`${prefix} ${platform}${userInfo}: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`);
+    // Silently ignore
   }
 };
 

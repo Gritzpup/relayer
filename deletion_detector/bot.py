@@ -263,25 +263,53 @@ async def main():
     logger.info("="*60)
     
     # Add a small delay to avoid startup conflicts with other SQLite databases
-    await asyncio.sleep(1)
+    await asyncio.sleep(2)
     
     # Start the client with retry logic for database lock issues
-    max_retries = 3
+    max_retries = 10  # Increased from 3
     retry_delay = 2
     
     for attempt in range(max_retries):
         try:
+            # Clear any potential locks first
+            if attempt > 0:
+                # Try to force close any hanging database connections
+                try:
+                    import gc
+                    gc.collect()
+                    await asyncio.sleep(0.5)
+                except:
+                    pass
+            
             await app.start()
             logger.info("Successfully started Pyrogram client")
             break
-        except sqlite3.OperationalError as e:
-            if "database is locked" in str(e) and attempt < max_retries - 1:
+        except (sqlite3.OperationalError, Exception) as e:
+            error_msg = str(e).lower()
+            if ("database is locked" in error_msg or "database lock" in error_msg) and attempt < max_retries - 1:
                 logger.warning(f"Database locked, retrying in {retry_delay} seconds... (attempt {attempt + 1}/{max_retries})")
                 await asyncio.sleep(retry_delay)
-                retry_delay *= 2  # Exponential backoff
+                retry_delay = min(retry_delay * 1.5, 30)  # Exponential backoff with cap
             else:
-                logger.error(f"Failed to start client after {max_retries} attempts")
-                raise
+                if attempt == max_retries - 1:
+                    logger.error(f"Failed to start client after {max_retries} attempts. Forcing database cleanup...")
+                    # Last resort: try to remove the session file and recreate
+                    try:
+                        import os
+                        session_file = "deletion_detector/deletion_bot.session"
+                        if os.path.exists(session_file):
+                            logger.warning("Removing locked session file...")
+                            os.remove(session_file)
+                            # Try one more time with fresh session
+                            await asyncio.sleep(2)
+                            await app.start()
+                            logger.info("Successfully started with fresh session")
+                            break
+                    except Exception as cleanup_err:
+                        logger.error(f"Cleanup failed: {cleanup_err}")
+                        raise e
+                else:
+                    raise
     
     # Get session info
     me = await app.get_me()

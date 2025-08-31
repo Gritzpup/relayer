@@ -155,7 +155,8 @@ export class RelayManager {
       message.replyTo?.messageId,
       message.replyTo?.content,
       message.replyTo?.author,
-      message.replyTo?.platform
+      message.replyTo?.platform,
+      message.channelId  // Pass the channel ID for Discord messages
     );
 
     // Update database with mapping ID for Telegram messages
@@ -435,7 +436,16 @@ export class RelayManager {
 
       logger.info(`Attempting to delete message ${targetMessageId} on ${targetPlatformEnum}`);
       try {
-        const success = await service.deleteMessage(targetMessageId as string);
+        // Get channel ID for Discord messages
+        const channelId = targetPlatformEnum === Platform.Discord && mapping.platformChannels ? 
+          mapping.platformChannels[Platform.Discord] : undefined;
+        
+        if (channelId) {
+          logger.info(`Using stored channel ID ${channelId} for Discord deletion`);
+        }
+        
+        // Pass channel ID for Discord, undefined for other platforms
+        const success = await service.deleteMessage(targetMessageId as string, channelId);
         if (success) {
           logger.info(`✅ Successfully deleted message ${targetMessageId} on ${targetPlatformEnum}`);
         } else {
@@ -615,8 +625,10 @@ export class RelayManager {
         logger.info(`MAPPING: About to add ${targetPlatform} message ${sentMessageId} to mapping ${mappingId} at ${new Date().toISOString()}`);
         
         // Track in mapper first (this is faster and what incoming messages check)
-        await this.messageMapper.addPlatformMessage(mappingId, targetPlatform, sentMessageId);
-        logger.info(`MAPPING: Successfully added ${targetPlatform} message ${sentMessageId} to mapping ${mappingId} at ${new Date().toISOString()}`);
+        // Pass channel ID for Discord messages
+        const channelId = targetPlatform === Platform.Discord ? targetChannelId : undefined;
+        await this.messageMapper.addPlatformMessage(mappingId, targetPlatform, sentMessageId, channelId);
+        logger.info(`MAPPING: Successfully added ${targetPlatform} message ${sentMessageId} to mapping ${mappingId}${channelId ? ` in channel ${channelId}` : ''} at ${new Date().toISOString()}`);
         
         // Then track in database (can be slower, used for persistence)
         await messageDb.trackPlatformMessage({

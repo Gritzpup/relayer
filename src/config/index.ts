@@ -110,6 +110,10 @@ export const channelMappings: ChannelMappings = {
   'gaming': {
     discord: '1400678446727958590',
     telegram: '11328'
+  },
+  'tech': {
+    discord: '1405218889960394986',
+    telegram: '4680'
   }
 };
 
@@ -137,9 +141,9 @@ export const config: Config = {
     customEmojis: getCustomEmojis(),
   },
   logging: {
-    level: getEnvVar('LOG_LEVEL', 'info'),
-    maxFiles: getEnvVar('LOG_MAX_FILES', '14d'),
-    maxSize: getEnvVar('LOG_MAX_SIZE', '20m'),
+    level: getEnvVar('LOG_LEVEL', 'error'),  // Default to error only
+    maxFiles: getEnvVar('LOG_MAX_FILES', '3d'),  // Keep only 3 days
+    maxSize: getEnvVar('LOG_MAX_SIZE', '5m'),  // Max 5MB per file
   },
   channelMappings,
 };

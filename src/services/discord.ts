@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, TextChannel, Message, PartialMessage, AttachmentBuilder, EmbedBuilder, Partials } from 'discord.js';
+import { Client, GatewayIntentBits, TextChannel, Message, PartialMessage, AttachmentBuilder, EmbedBuilder, Partials, ChannelType } from 'discord.js';
 import { config, channelMappings } from '../config';
 import { Platform, RelayMessage, MessageHandler, DeleteHandler, PlatformService, ServiceStatus, Attachment } from '../types';
 import { logger, logPlatformMessage, logError } from '../utils/logger';
@@ -307,28 +307,70 @@ export class DiscordService implements PlatformService {
     }
   }
 
-  async deleteMessage(messageId: string): Promise<boolean> {
+  async deleteMessage(messageId: string, channelId?: string): Promise<boolean> {
     try {
-      // Try to find the message in any of the mapped channels
-      for (const [channelName, mapping] of Object.entries(channelMappings)) {
-        const channel = this.client.channels.cache.get(mapping.discord);
-        if (!channel || !channel.isTextBased()) continue;
-        
+      // If channel ID is provided, try that first (more efficient)
+      if (channelId) {
+        logger.info(`Attempting to delete Discord message ${messageId} from provided channel ${channelId}`);
+        const channel = this.client.channels.cache.get(channelId);
+        if (channel && channel.isTextBased()) {
+          try {
+            const message = await (channel as TextChannel).messages.fetch(messageId);
+            await message.delete();
+            logger.info(`Discord message ${messageId} deleted successfully from channel ${channelId}`);
+            return true;
+          } catch (error: any) {
+            // Check for permission error specifically
+            if (error.code === 50013) {
+              logger.error(`❌ PERMISSION ERROR: Bot lacks "Manage Messages" permission to delete Discord messages!`);
+              logger.error(`Please grant the bot "Manage Messages" permission in your Discord server settings.`);
+              logger.error(`See DISCORD_PERMISSIONS_FIX.md for instructions.`);
+              return false;
+            }
+            logger.warn(`Failed to delete message ${messageId} from provided channel ${channelId}: ${error}`);
+            // Fall through to search other channels
+          }
+        } else {
+          logger.warn(`Channel ${channelId} not found or not text-based`);
+        }
+      }
+      
+      // Search ALL text channels the bot can see, not just mapped ones
+      logger.info(`Searching for Discord message ${messageId} in all accessible channels...`);
+      const allChannels = this.client.channels.cache.filter(channel => 
+        channel.isTextBased() && channel.type === ChannelType.GuildText
+      );
+      
+      for (const channel of allChannels.values()) {
         try {
-          const message = await (channel as TextChannel).messages.fetch(messageId);
+          const textChannel = channel as TextChannel;
+          const message = await textChannel.messages.fetch(messageId);
           await message.delete();
-          logger.info(`Discord message ${messageId} deleted successfully from #${channelName}`);
+          logger.info(`Discord message ${messageId} deleted successfully from #${textChannel.name} (${textChannel.id})`);
           return true;
-        } catch (error) {
-          // Message not in this channel, try next
+        } catch (error: any) {
+          // Check for permission error specifically
+          if (error.code === 50013) {
+            logger.error(`❌ PERMISSION ERROR: Bot lacks "Manage Messages" permission in #${(channel as TextChannel).name}!`);
+            logger.error(`Please grant the bot "Manage Messages" permission in your Discord server settings.`);
+            logger.error(`See DISCORD_PERMISSIONS_FIX.md for instructions.`);
+            return false;
+          }
+          // Message not in this channel, continue searching
           continue;
         }
       }
       
-      logger.error(`Failed to find Discord message ${messageId} in any mapped channel`);
+      logger.error(`Failed to find Discord message ${messageId} in any accessible channel (searched ${allChannels.size} channels)`);
       return false;
-    } catch (error) {
-      logger.error(`Failed to delete Discord message ${messageId}: ${error}`);
+    } catch (error: any) {
+      if (error.code === 50013) {
+        logger.error(`❌ PERMISSION ERROR: Bot lacks "Manage Messages" permission to delete Discord messages!`);
+        logger.error(`Please grant the bot "Manage Messages" permission in your Discord server settings.`);
+        logger.error(`See DISCORD_PERMISSIONS_FIX.md for instructions.`);
+      } else {
+        logger.error(`Failed to delete Discord message ${messageId}: ${error}`);
+      }
       return false;
     }
   }

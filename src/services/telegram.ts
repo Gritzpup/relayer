@@ -16,7 +16,7 @@ export class TelegramService implements PlatformService {
   private isShuttingDown: boolean = false;
   private pollingActive: boolean = false;
   private conflictDetected: boolean = false;
-  private adminUserIds: Set<number> = new Set([746386717]); // Add your Telegram user ID here
+  private adminUserIds: Set<number> = new Set(); // Will be populated from environment variable
   private status: ServiceStatus = {
     platform: Platform.Telegram,
     connected: false,
@@ -37,6 +37,18 @@ export class TelegramService implements PlatformService {
       } as any,
       filepath: false // Disable automatic file downloads
     });
+    
+    // Initialize admin user IDs from environment variable or config
+    // Format: comma-separated list of user IDs, e.g., "746386717,123456789"
+    const adminIds = process.env.TELEGRAM_ADMIN_IDS || '746386717';
+    adminIds.split(',').forEach(id => {
+      const numId = parseInt(id.trim());
+      if (!isNaN(numId)) {
+        this.adminUserIds.add(numId);
+        logger.info(`Added Telegram admin ID: ${numId}`);
+      }
+    });
+    logger.info(`Initialized with ${this.adminUserIds.size} admin(s): ${Array.from(this.adminUserIds).join(', ')}`);
     
     this.reconnectManager = new ReconnectManager(
       'Telegram',
@@ -391,29 +403,38 @@ export class TelegramService implements PlatformService {
         
         // Check if the replied message is from the bot (a relayed message)
         if (repliedMsg.from && repliedMsg.from.id === parseInt(config.telegram.botToken.split(':')[0])) {
+          // Check if the user is an admin
+          const isAdmin = this.adminUserIds.has(msg.from.id);
+          
           // Extract the original author from the message
           const match = repliedMsg.text?.match(/\[(Discord|Twitch)\]\s+([^:]+):\s*/);
           if (match) {
             const author = match[2].trim();
             const requestingUser = msg.from.username || msg.from.first_name || 'Unknown';
             
-            // Check if the requesting user matches the original author
-            if (author.toLowerCase() === requestingUser.toLowerCase()) {
+            // Check if the requesting user is admin OR matches the original author
+            if (isAdmin || author.toLowerCase() === requestingUser.toLowerCase()) {
               // Find the mapping for this bot message
               const botMessageId = repliedMsg.message_id;
               
               // Look through our mappings to find this message
               // We need to trigger deletion based on the bot's message ID
               if (this.deleteHandler) {
-                logger.info(`User ${requestingUser} requested deletion of their message via /delete command`);
-                await this.deleteHandler(Platform.Telegram, botMessageId.toString());
+                if (isAdmin && author.toLowerCase() !== requestingUser.toLowerCase()) {
+                  logger.info(`Admin ${requestingUser} (ID: ${msg.from.id}) requested deletion of ${author}'s message via /delete command`);
+                  // Pass true for isAdminDeletion to delete on ALL platforms
+                  await this.deleteHandler(Platform.Telegram, botMessageId.toString(), true);
+                } else {
+                  logger.info(`User ${requestingUser} requested deletion of their message via /delete command`);
+                  await this.deleteHandler(Platform.Telegram, botMessageId.toString());
+                }
                 
                 // Delete the command message and the bot's message
                 await this.bot.deleteMessage(msg.chat.id, msg.message_id);
                 await this.bot.deleteMessage(msg.chat.id, botMessageId);
               }
             } else {
-              // Not the original author
+              // Not the original author and not an admin
               const response = await this.bot.sendMessage(msg.chat.id, 
                 `❌ You can only delete your own messages.`, 
                 { reply_to_message_id: msg.message_id }
@@ -452,6 +473,29 @@ export class TelegramService implements PlatformService {
           this.bot.deleteMessage(msg.chat.id, msg.message_id);
         }, 5000);
       }
+    });
+
+    // Add command handler for /admin to check admin status
+    this.bot.onText(/^\/admin$/, async (msg) => {
+      if (this.conflictDetected || this.isShuttingDown) return;
+      if (msg.chat.id.toString() !== config.telegram.groupId) return;
+      if (!msg.from || msg.from.is_bot) return;
+      
+      const isAdmin = this.adminUserIds.has(msg.from.id);
+      const username = msg.from.username || msg.from.first_name || 'Unknown';
+      
+      const response = await this.bot.sendMessage(msg.chat.id, 
+        isAdmin 
+          ? `✅ ${username} (ID: ${msg.from.id}) is an admin. You can delete any relayed message.`
+          : `❌ ${username} (ID: ${msg.from.id}) is not an admin. You can only delete your own messages.`,
+        { reply_to_message_id: msg.message_id }
+      );
+      
+      // Delete the command and response after 10 seconds
+      setTimeout(() => {
+        this.bot.deleteMessage(msg.chat.id, response.message_id).catch(() => {});
+        this.bot.deleteMessage(msg.chat.id, msg.message_id).catch(() => {});
+      }, 10000);
     });
 
   }
@@ -783,7 +827,7 @@ export class TelegramService implements PlatformService {
     }
   }
 
-  async deleteMessage(messageId: string): Promise<boolean> {
+  async deleteMessage(messageId: string, _channelId?: string): Promise<boolean> {
     // Don't delete if conflict detected
     if (this.conflictDetected) {
       logger.error('Cannot delete message: Bot conflict detected');

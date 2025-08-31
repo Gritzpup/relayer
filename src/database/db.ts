@@ -27,31 +27,60 @@ export class MessageDatabase {
   private cleanupInterval?: NodeJS.Timeout;
 
   async initialize(): Promise<void> {
-    try {
-      this.db = await open({
-        filename: this.dbPath,
-        driver: sqlite3.Database
-      });
+    const maxRetries = 5;
+    let retryDelay = 1000; // Start with 1 second
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        this.db = await open({
+          filename: this.dbPath,
+          driver: sqlite3.Database
+        });
 
-      // Enable foreign keys and WAL mode for better concurrency
-      await this.db.run('PRAGMA foreign_keys = ON');
-      await this.db.run('PRAGMA journal_mode = WAL');
-      await this.db.run('PRAGMA busy_timeout = 5000'); // 5 second busy timeout
-      await this.db.run('PRAGMA synchronous = NORMAL'); // Better performance with WAL
+        // Enable foreign keys and WAL mode for better concurrency
+        await this.db.run('PRAGMA foreign_keys = ON');
+        await this.db.run('PRAGMA journal_mode = WAL');
+        await this.db.run('PRAGMA busy_timeout = 10000'); // Increased to 10 second busy timeout
+        await this.db.run('PRAGMA synchronous = NORMAL'); // Better performance with WAL
+        await this.db.run('PRAGMA cache_size = -64000'); // 64MB cache
+        await this.db.run('PRAGMA temp_store = MEMORY'); // Use memory for temp tables
 
-      // Create tables from schema
-      const schemaPath = join(__dirname, 'schema.sql');
-      const schema = readFileSync(schemaPath, 'utf-8');
-      await this.db.exec(schema);
+        // Create tables from schema
+        const schemaPath = join(__dirname, 'schema.sql');
+        const schema = readFileSync(schemaPath, 'utf-8');
+        await this.db.exec(schema);
 
-      logger.info('Database initialized successfully');
-      
-      // Start periodic cleanup
-      this.startPeriodicCleanup();
-    } catch (error) {
-      logger.error('Failed to initialize database:', error);
-      throw error;
+        logger.info('Database initialized successfully');
+        
+        // Start periodic cleanup
+        this.startPeriodicCleanup();
+        return; // Success, exit the retry loop
+      } catch (error: any) {
+        const errorMessage = error?.message || String(error);
+        
+        if (errorMessage.includes('database is locked') && attempt < maxRetries) {
+          logger.warn(`Database locked, retrying in ${retryDelay}ms... (attempt ${attempt}/${maxRetries})`);
+          
+          // Try to close any existing connection
+          if (this.db) {
+            try {
+              await this.db.close();
+            } catch (closeError) {
+              // Ignore close errors
+            }
+          }
+          
+          // Wait before retrying
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
+          retryDelay = Math.min(retryDelay * 2, 10000); // Exponential backoff, max 10 seconds
+        } else {
+          logger.error('Failed to initialize database:', error);
+          throw error;
+        }
+      }
     }
+    
+    throw new Error(`Failed to initialize database after ${maxRetries} attempts`);
   }
 
   async trackMessage(data: MessageTrackingData): Promise<void> {
