@@ -34,7 +34,8 @@ export class MemoryMonitor {
     const rssMB = Math.round(memUsage.rss / this.MB);
     const externalMB = Math.round(memUsage.external / this.MB);
     
-    logger.info(`Memory Usage: Heap: ${heapUsedMB}/${heapTotalMB}MB, RSS: ${rssMB}MB, External: ${externalMB}MB`);
+    // Only log memory usage when it's high, not every time
+    // logger.info(`Memory Usage: Heap: ${heapUsedMB}/${heapTotalMB}MB, RSS: ${rssMB}MB, External: ${externalMB}MB`);
   }
   
   private checkMemoryThresholds(): void {

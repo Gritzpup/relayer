@@ -46,7 +46,7 @@ export class RelayManager {
     // Subscribe to deletion events from Redis
     console.log('[RELAY] Subscribing to Redis deletion events...');
     await redisEvents.subscribeToDeletions(async (event: DeletionEvent) => {
-      logger.info(`Processing deletion event from Redis: ${event.platform} message ${event.messageId}`);
+      // logger.info(`Processing deletion event from Redis: ${event.platform} message ${event.messageId}`);
       await this.handleDeletionEvent(event);
     });
     console.log('[RELAY] ✅ Redis initialized');
@@ -138,7 +138,7 @@ export class RelayManager {
   private async handleMessage(message: RelayMessage): Promise<void> {
     // Always track the message, even if we're not relaying it
     // This allows us to handle replies to native messages
-    logger.info(`[CHANNEL DEBUG] Message from ${message.platform} channel: ${message.channelName} (ID: ${message.channelId})`);
+    // logger.info(`[CHANNEL DEBUG] Message from ${message.platform} channel: ${message.channelName} (ID: ${message.channelId})`);
     
     if (message.replyTo) {
       logger.debug(`Processing message ${message.id} from ${message.platform} which is a reply to ${message.replyTo.messageId}`);
@@ -163,7 +163,7 @@ export class RelayManager {
     if (message.platform === Platform.Telegram) {
       const messageIdNum = parseInt(message.id);
       if (!isNaN(messageIdNum)) {
-        logger.info(`Updating mapping_id for Telegram message ${messageIdNum} to ${mappingId}`);
+        // // logger.info(`Updating mapping_id for Telegram message ${messageIdNum} to ${mappingId}`);
         await messageDb.updateMappingId(messageIdNum, mappingId);
       }
     }
@@ -213,7 +213,7 @@ export class RelayManager {
     
     // Log details about each reply found
     for (const reply of replies) {
-      logger.info(`Reply found: ${reply.id} from ${reply.originalPlatform}, platforms: ${JSON.stringify(reply.platformMessages)}`);
+      // logger.info(`Reply found: ${reply.id} from ${reply.originalPlatform}, platforms: ${JSON.stringify(reply.platformMessages)}`);
     }
     
     // Handle replies in Twitch (need to delete and re-send with updated reply context)
@@ -307,9 +307,9 @@ export class RelayManager {
         const formatterReplyInfo = shouldShowReplyContext ? replyInfo : undefined;
         
         // Format the edited content for the target platform
-        logger.info(`Formatting edit for ${targetPlatform}: isEdit=${message.isEdit}, hasReply=${!!message.replyTo}, showReplyContext=${shouldShowReplyContext}`);
+        // logger.info(`Formatting edit for ${targetPlatform}: isEdit=${message.isEdit}, hasReply=${!!message.replyTo}, showReplyContext=${shouldShowReplyContext}`);
         const formattedContent = this.formatter.formatForPlatform(message, targetPlatform, formatterReplyInfo);
-        logger.info(`Formatted content for ${targetPlatform}: "${formattedContent}"`);
+        // logger.info(`Formatted content for ${targetPlatform}: "${formattedContent}"`);
         
         // Check if target is Twitch (string comparison to avoid TS narrowing issues)
         if (targetPlatform.toString() === Platform.Twitch.toString()) {
@@ -419,12 +419,12 @@ export class RelayManager {
       // For admin deletions, delete on ALL platforms including source
       // For regular deletions, skip the source platform
       if (!isAdminDeletion && targetPlatformEnum === sourcePlatform) {
-        logger.info(`Skipping ${targetPlatform}: source platform (non-admin deletion)`);
+        // logger.info(`Skipping ${targetPlatform}: source platform (non-admin deletion)`);
         continue;
       }
       
       if (!targetMessageId) {
-        logger.info(`Skipping ${targetPlatform}: no message ID`);
+        // logger.info(`Skipping ${targetPlatform}: no message ID`);
         continue;
       }
       
@@ -434,20 +434,20 @@ export class RelayManager {
         continue;
       }
 
-      logger.info(`Attempting to delete message ${targetMessageId} on ${targetPlatformEnum}`);
+      // logger.info(`Attempting to delete message ${targetMessageId} on ${targetPlatformEnum}`);
       try {
         // Get channel ID for Discord messages
         const channelId = targetPlatformEnum === Platform.Discord && mapping.platformChannels ? 
           mapping.platformChannels[Platform.Discord] : undefined;
         
         if (channelId) {
-          logger.info(`Using stored channel ID ${channelId} for Discord deletion`);
+          // logger.info(`Using stored channel ID ${channelId} for Discord deletion`);
         }
         
         // Pass channel ID for Discord, undefined for other platforms
         const success = await service.deleteMessage(targetMessageId as string, channelId);
         if (success) {
-          logger.info(`✅ Successfully deleted message ${targetMessageId} on ${targetPlatformEnum}`);
+          // logger.info(`✅ Successfully deleted message ${targetMessageId} on ${targetPlatformEnum}`);
         } else {
           logger.warn(`❌ Failed to delete message ${targetMessageId} on ${targetPlatformEnum} (may need moderator permissions)`);
         }
@@ -487,10 +487,10 @@ export class RelayManager {
     if (targetPlatform === Platform.Twitch) {
       // Only relay general channel messages to Twitch
       if (!message.channelName || message.channelName !== 'general') {
-        logger.info(`Skipping ${message.channelName || 'unmapped channel'} message to Twitch - only general channel is relayed`);
+        // logger.info(`Skipping ${message.channelName || 'unmapped channel'} message to Twitch - only general channel is relayed`);
         return;
       }
-      logger.info(`Routing message from ${message.platform} #general → Twitch`);
+      // // logger.info(`Routing message from ${message.platform} #general → Twitch`);
     } else if (message.channelName && channelMappings[message.channelName]) {
       const mapping = channelMappings[message.channelName];
       if (targetPlatform === Platform.Discord) {
@@ -511,10 +511,8 @@ export class RelayManager {
         logger.warn(`No channel mapping found for ${message.channelName} to ${targetPlatform}, skipping message`);
         return;
       }
-      logger.info(`Routing message from ${message.platform} #${message.channelName} → ${targetPlatform} #${Object.keys(channelMappings).find(name => 
-        (targetPlatform === Platform.Discord && channelMappings[name].discord === targetChannelId) ||
-        (targetPlatform === Platform.Telegram && channelMappings[name].telegram === targetChannelId)
-      ) || targetChannelId}`);
+      // Commented out verbose logging
+      // logger.info(`Routing message from ${message.platform} #${message.channelName} → ${targetPlatform}`);
     } else {
       // No channel mapping and not Twitch, skip
       if (targetPlatform.toString() !== Platform.Twitch.toString()) {
@@ -531,7 +529,7 @@ export class RelayManager {
     // Skip relaying empty messages (unless they have attachments)
     if ((!message.content || message.content.trim() === '') && 
         (!message.attachments || message.attachments.length === 0)) {
-      logger.info(`Skipping empty message from ${message.platform} by ${message.author} to ${targetPlatform}`);
+      // logger.info(`Skipping empty message from ${message.platform} by ${message.author} to ${targetPlatform}`);
       return;
     }
 
@@ -547,21 +545,21 @@ export class RelayManager {
           content: message.replyTo.content,
           platform: message.replyTo.platform
         };
-        logger.info(`REPLY INFO: Message from ${message.platform} has reply to ${message.replyTo.author}: "${message.replyTo.content?.substring(0, 30)}..."`);
+        // logger.info(`REPLY INFO: Message from ${message.platform} has reply to ${message.replyTo.author}: "${message.replyTo.content?.substring(0, 30)}..."`);
       }
       
       // Then check if we can find the proper message ID in our messageMapper (for cross-platform replies)
       if (mappingId && message.replyTo) {
-        logger.info(`REPLY LOOKUP: Checking for reply info for mapping ${mappingId} on ${targetPlatform}`);
-        logger.info(`REPLY LOOKUP: Message replyTo data: ${JSON.stringify(message.replyTo)}`);
+        // logger.info(`REPLY LOOKUP: Checking for reply info for mapping ${mappingId} on ${targetPlatform}`);
+        // logger.info(`REPLY LOOKUP: Message replyTo data: ${JSON.stringify(message.replyTo)}`);
         const replyData = await this.messageMapper.getReplyToInfo(mappingId, targetPlatform);
         if (replyData) {
           replyToMessageId = replyData.messageId;
           // Update replyInfo with data from mapper if available
           replyInfo = { author: replyData.author, content: replyData.content };
-          logger.info(`REPLY LOOKUP: Found target message ${replyToMessageId} on ${targetPlatform}`);
+          // logger.info(`REPLY LOOKUP: Found target message ${replyToMessageId} on ${targetPlatform}`);
         } else {
-          logger.info(`REPLY LOOKUP: No reply data found for mapping ${mappingId} on ${targetPlatform}`);
+          // logger.info(`REPLY LOOKUP: No reply data found for mapping ${mappingId} on ${targetPlatform}`);
           
           // Special case: When replying to a bot message, we might need to look up the platform message differently
           if (message.replyTo.platform && message.replyTo.messageId) {
@@ -594,7 +592,7 @@ export class RelayManager {
       const formatterReplyInfo = shouldShowReplyContext ? replyInfo : undefined;
       
       if (message.platform === Platform.Twitch) {
-        logger.info(`TWITCH RELAY: shouldShowReplyContext=${shouldShowReplyContext}, hasReplyTo=${!!message.replyTo}, replyInfo=${JSON.stringify(replyInfo)}, formatterReplyInfo=${JSON.stringify(formatterReplyInfo)}`);
+        // logger.info(`TWITCH RELAY: shouldShowReplyContext=${shouldShowReplyContext}, hasReplyTo=${!!message.replyTo}, replyInfo=${JSON.stringify(replyInfo)}, formatterReplyInfo=${JSON.stringify(formatterReplyInfo)}`);
       }
       
       const formattedContent = this.formatter.formatForPlatform(message, targetPlatform, formatterReplyInfo);
@@ -615,20 +613,20 @@ export class RelayManager {
         if (attachments.length === 0) attachments = undefined;
       }
 
-      logger.info(`SENDING TO ${targetPlatform}: channel=${targetChannelId}, replyToMessageId=${replyToMessageId}, hasReplyInfo=${!!replyInfo}`);
+      // // logger.info(`SENDING TO ${targetPlatform}: channel=${targetChannelId}, replyToMessageId=${replyToMessageId}, hasReplyInfo=${!!replyInfo}`);
       const sentMessageId = await service.sendMessage(formattedContent, attachments, replyToMessageId, targetChannelId, message);
       this.rateLimiter.recordMessage(targetPlatform, formattedContent, attachments);
       
       // Track the sent message ID in our mapping IMMEDIATELY to avoid race conditions
       if (sentMessageId) {
         // Add detailed logging for debugging
-        logger.info(`MAPPING: About to add ${targetPlatform} message ${sentMessageId} to mapping ${mappingId} at ${new Date().toISOString()}`);
+        // // logger.info(`MAPPING: About to add ${targetPlatform} message ${sentMessageId} to mapping ${mappingId} at ${new Date().toISOString()}`);
         
         // Track in mapper first (this is faster and what incoming messages check)
         // Pass channel ID for Discord messages
         const channelId = targetPlatform === Platform.Discord ? targetChannelId : undefined;
         await this.messageMapper.addPlatformMessage(mappingId, targetPlatform, sentMessageId, channelId);
-        logger.info(`MAPPING: Successfully added ${targetPlatform} message ${sentMessageId} to mapping ${mappingId}${channelId ? ` in channel ${channelId}` : ''} at ${new Date().toISOString()}`);
+        // // logger.info(`MAPPING: Successfully added ${targetPlatform} message ${sentMessageId} to mapping ${mappingId}${channelId ? ` in channel ${channelId}` : ''} at ${new Date().toISOString()}`);
         
         // Then track in database (can be slower, used for persistence)
         await messageDb.trackPlatformMessage({

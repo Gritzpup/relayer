@@ -74,11 +74,11 @@ export class TelegramService implements PlatformService {
     };
     
     this.bot.on('message', async (msg: TelegramBot.Message) => {
-      console.log(`[TELEGRAM MESSAGE] Received from ${msg.from?.username || msg.from?.first_name || 'Unknown'} in chat ${msg.chat.id}`);
+      // console.log(`[TELEGRAM MESSAGE] Received from ${msg.from?.username || msg.from?.first_name || 'Unknown'} in chat ${msg.chat.id}`);
       
       if (this.conflictDetected || this.isShuttingDown) return;
       if (msg.chat.id.toString() !== config.telegram.groupId) {
-        console.log(`[TELEGRAM] Skipping message from wrong chat: ${msg.chat.id} !== ${config.telegram.groupId}`);
+        // console.log(`[TELEGRAM] Skipping message from wrong chat: ${msg.chat.id} !== ${config.telegram.groupId}`);
         return;
       }
       if (msg.from?.is_bot) return;
@@ -91,7 +91,7 @@ export class TelegramService implements PlatformService {
       // In Telegram supergroups, replies might have the wrong message_thread_id
       // We should process the reply and determine the channel from context
       if (msg.reply_to_message) {
-        logger.info(`Processing reply message ${msg.message_id}, original thread_id: ${threadId}`);
+        // logger.info(`Processing reply message ${msg.message_id}, original thread_id: ${threadId}`);
         
         // For replies, try to determine the actual topic from the message being replied to
         // First check if threadId matches a known topic
@@ -125,7 +125,7 @@ export class TelegramService implements PlatformService {
           logger.warn(`Reply message ${msg.message_id} from unmapped topic ${threadId}, skipping`);
           return;
         }
-        logger.info(`Reply message ${msg.message_id} mapped to channel: ${channelName}`);
+        // logger.info(`Reply message ${msg.message_id} mapped to channel: ${channelName}`);
       } else {
         // For non-reply messages, use the original logic
         // Find channel name based on thread ID
@@ -165,18 +165,18 @@ export class TelegramService implements PlatformService {
         is_topic_message: msg.is_topic_message
       };
       
-      logger.info(`Telegram message in #${channelName}:`, debugInfo);
+      // // logger.info(`Telegram message in #${channelName}:`, debugInfo);
       
-      // Extra logging for reply detection issues
+      // Extra logging for reply detection issues (commented out)
       if (msg.reply_to_message) {
-        logger.info(`REPLY DETECTED - Full reply_to_message:`, {
-          reply_msg_id: msg.reply_to_message.message_id,
-          reply_from: msg.reply_to_message.from?.username || msg.reply_to_message.from?.first_name,
-          reply_text: msg.reply_to_message.text?.substring(0, 50),
-          reply_is_bot: msg.reply_to_message.from?.is_bot,
-          current_thread_id: msg.message_thread_id,
-          is_same_as_thread: msg.reply_to_message.message_id === msg.message_thread_id
-        });
+        // logger.info(`REPLY DETECTED - Full reply_to_message:`, {
+        //   reply_msg_id: msg.reply_to_message.message_id,
+        //   reply_from: msg.reply_to_message.from?.username || msg.reply_to_message.from?.first_name,
+        //   reply_text: msg.reply_to_message.text?.substring(0, 50),
+        //   reply_is_bot: msg.reply_to_message.from?.is_bot,
+        //   current_thread_id: msg.message_thread_id,
+        //   is_same_as_thread: msg.reply_to_message.message_id === msg.message_thread_id
+        // });
       }
       
       // Extra detailed logging for debugging reply issues
@@ -191,7 +191,7 @@ export class TelegramService implements PlatformService {
       
       // Check for custom emoji entities
       if (msg.entities) {
-        logger.info(`Telegram message entities:`, JSON.stringify(msg.entities));
+        // // logger.info(`Telegram message entities:`, JSON.stringify(msg.entities));
       }
       
       // Log the full message structure for debugging
@@ -283,7 +283,7 @@ export class TelegramService implements PlatformService {
       const username = msg.from.username || msg.from.first_name || 'Unknown';
       const content = msg.text || msg.caption || '[Media]';
       
-      logger.info(`Telegram message edited: ${msg.message_id} in channel ${channelName} - New: "${content}"`);
+      // logger.info(`Telegram message edited: ${msg.message_id} in channel ${channelName} - New: "${content}"`);
       logPlatformMessage('Telegram', 'in', `(edited) ${content}`, username);
       
       if (this.messageHandler) {
@@ -516,9 +516,9 @@ export class TelegramService implements PlatformService {
   }
 
   private async connectInternal(): Promise<void> {
-    logger.info('[TELEGRAM] Starting connection attempt...');
-    console.log('[TELEGRAM] Attempting to connect with token:', config.telegram.botToken.substring(0, 15) + '...');
-    console.log('[TELEGRAM] Target group ID:', config.telegram.groupId);
+    // logger.info('[TELEGRAM] Starting connection attempt...');
+    // console.log('[TELEGRAM] Attempting to connect with token:', config.telegram.botToken.substring(0, 15) + '...');
+    // console.log('[TELEGRAM] Target group ID:', config.telegram.groupId);
     
     try {
       // Don't try to connect if conflict detected
@@ -528,7 +528,20 @@ export class TelegramService implements PlatformService {
         throw new Error('Bot conflict detected');
       }
       
-      // Always try to stop existing polling before reconnecting
+      // Always try to stop any existing polling first (from previous runs)
+      try {
+        await this.bot.stopPolling({ cancel: true });
+        // logger.info('[TELEGRAM] Cleared previous polling instance');
+      } catch (stopError) {
+        // This is expected on first run, ignore
+        // logger.debug('[TELEGRAM] No previous polling to stop (normal on first run)');
+      }
+      
+      // Always wait a bit before starting polling to avoid conflicts
+      // This helps prevent "EFATAL: AggregateError" on initial connection
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Now handle if we were already connected in this instance
       if (this.pollingActive || this.isConnected) {
         logger.info('[TELEGRAM] Stopping existing polling before reconnect...');
         try {
@@ -544,51 +557,89 @@ export class TelegramService implements PlatformService {
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
       
-      logger.info('[TELEGRAM] Starting polling with enhanced settings...');
-      console.log('[TELEGRAM] Starting polling...');
-      this.pollingActive = true;
-      await this.bot.startPolling({ 
-        polling: { 
-          interval: 1000, // Increased interval to reduce server load
-          autoStart: true,
-          params: {
-            timeout: 25, // Long polling timeout
-            allowed_updates: ['message', 'edited_message', 'callback_query']
+      // logger.info('[TELEGRAM] Starting polling with enhanced settings...');
+      // console.log('[TELEGRAM] Starting polling...');
+      
+      // Try to start polling with error recovery
+      try {
+        this.pollingActive = true;
+        await this.bot.startPolling({ 
+          polling: { 
+            interval: 1000, // Increased interval to reduce server load
+            autoStart: true,
+            params: {
+              timeout: 25, // Long polling timeout
+              allowed_updates: ['message', 'edited_message', 'callback_query']
+            }
+          },
+          restart: false // Don't auto-restart on errors, we handle this manually
+        });
+        this.isConnected = true;
+        this.status.connected = true;
+      } catch (pollError: any) {
+        // If we get EFATAL or AggregateError, it might be a conflict issue
+        if (pollError.message?.includes('EFATAL') || pollError.message?.includes('AggregateError')) {
+          logger.warn('[TELEGRAM] Initial polling conflict detected, retrying with longer delay...');
+          this.pollingActive = false;
+          
+          // Stop any conflicting polling
+          try {
+            await this.bot.stopPolling({ cancel: true });
+          } catch (e) {
+            // Ignore stop errors
           }
-        },
-        restart: false // Don't auto-restart on errors, we handle this manually
-      });
-      this.isConnected = true;
-      this.status.connected = true;
+          
+          // Wait longer and retry once
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          
+          this.pollingActive = true;
+          await this.bot.startPolling({ 
+            polling: { 
+              interval: 1000,
+              autoStart: true,
+              params: {
+                timeout: 25,
+                allowed_updates: ['message', 'edited_message', 'callback_query']
+              }
+            },
+            restart: false
+          });
+          this.isConnected = true;
+          this.status.connected = true;
+        } else {
+          // Re-throw other errors
+          throw pollError;
+        }
+      }
       
       // Test connection and verify bot permissions
       const me = await this.bot.getMe();
-      logger.info(`[TELEGRAM] ✅ Successfully connected as @${me.username}`);
-      console.log(`[TELEGRAM] Bot connected successfully as @${me.username}`);
-      console.log(`[TELEGRAM] Bot ID: ${me.id}`);
+      // logger.info(`[TELEGRAM] ✅ Successfully connected as @${me.username}`);
+      // console.log(`[TELEGRAM] Bot connected successfully as @${me.username}`);
+      // console.log(`[TELEGRAM] Bot ID: ${me.id}`);
       
       // Check bot permissions in the group
       try {
         const chat = await this.bot.getChat(config.telegram.groupId);
-        logger.info(`[TELEGRAM] Connected to group: ${chat.title || 'Unknown'}, type: ${chat.type}`);
-        console.log(`[TELEGRAM] Group info - Title: ${chat.title}, Type: ${chat.type}, ID: ${chat.id}`);
+        // logger.info(`[TELEGRAM] Connected to group: ${chat.title || 'Unknown'}, type: ${chat.type}`);
+        // console.log(`[TELEGRAM] Group info - Title: ${chat.title}, Type: ${chat.type}, ID: ${chat.id}`);
         
         // Get bot member info to check permissions
         const botMember = await this.bot.getChatMember(config.telegram.groupId, me.id);
-        logger.info(`[TELEGRAM] Bot permissions: ${JSON.stringify(botMember)}`);  
-        console.log(`[TELEGRAM] Bot status in group: ${botMember.status}`);
+        // logger.info(`[TELEGRAM] Bot permissions: ${JSON.stringify(botMember)}`);  
+        // console.log(`[TELEGRAM] Bot status in group: ${botMember.status}`);
         
         if (botMember.status === 'kicked' || botMember.status === 'left') {
           console.error(`[TELEGRAM] ❌ Bot is ${botMember.status} from the group`);
           throw new Error(`Bot is ${botMember.status} from the group`);
         }
-        console.log('[TELEGRAM] ✅ Bot has proper permissions in the group');
+        // console.log('[TELEGRAM] ✅ Bot has proper permissions in the group');
       } catch (chatError) {
         console.error('[TELEGRAM] Failed to verify group permissions:', chatError);
         logger.error('Failed to get chat/member info:', chatError);
       }
       
-      console.log('[TELEGRAM] ✅ Connection established and polling active');
+      // console.log('[TELEGRAM] ✅ Connection established and polling active');
     } catch (error) {
       console.error('[TELEGRAM] ❌ Connection failed:', error);
       logger.error('[TELEGRAM] Failed to connect:', error);
@@ -819,7 +870,7 @@ export class TelegramService implements PlatformService {
         message_id: parseInt(messageId),
         parse_mode: 'HTML', // Enable HTML formatting for bold tags
       });
-      logger.info(`Telegram message ${messageId} edited successfully`);
+      // logger.info(`Telegram message ${messageId} edited successfully`);
       return true;
     } catch (error) {
       logger.error(`Failed to edit Telegram message ${messageId}: ${error}`);
@@ -840,7 +891,7 @@ export class TelegramService implements PlatformService {
       // Note: Telegram API automatically handles deleting messages in the correct topic
       // as long as we have the correct message_id
       await this.bot.deleteMessage(chatId, parseInt(messageId));
-      logger.info(`Telegram message ${messageId} deleted successfully`);
+      // logger.info(`Telegram message ${messageId} deleted successfully`);
       return true;
     } catch (error) {
       logger.error(`Failed to delete Telegram message ${messageId}: ${error}`);
@@ -883,14 +934,14 @@ export class TelegramService implements PlatformService {
 
   private async convertMessage(msg: TelegramBot.Message, overrideChannelName?: string): Promise<RelayMessage> {
     // [convertMessage method remains the same...]
-    // Debug logging
-    logger.info(`Converting Telegram message ${msg.message_id}:`, {
-      text: msg.text,
-      caption: msg.caption,
-      hasReplyTo: !!msg.reply_to_message,
-      replyToId: msg.reply_to_message?.message_id,
-      from: msg.from?.username || msg.from?.first_name
-    });
+    // Debug logging (commented out)
+    // logger.info(`Converting Telegram message ${msg.message_id}:`, {
+    //   text: msg.text,
+    //   caption: msg.caption,
+    //   hasReplyTo: !!msg.reply_to_message,
+    //   replyToId: msg.reply_to_message?.message_id,
+    //   from: msg.from?.username || msg.from?.first_name
+    // });
     
     const attachments: Attachment[] = [];
 
@@ -1036,7 +1087,7 @@ export class TelegramService implements PlatformService {
           content: replyContent,
           platform: replyPlatform,
         };
-        logger.info(`Telegram message ${msg.message_id} is a reply to ${replyMsg.message_id} (author: ${replyAuthor}${replyPlatform ? `, platform: ${replyPlatform}` : ''})`);
+        // logger.info(`Telegram message.*is a reply to ${replyMsg.message_id} (author: ${replyAuthor}${replyPlatform ? `, platform: ${replyPlatform}` : ''})`);
       } else {
         logger.info(`Telegram message ${msg.message_id} is replying to message ${replyMsg.message_id} with no retrievable content, treating as regular message`);
       }

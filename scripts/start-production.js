@@ -198,7 +198,17 @@ async function startServices() {
   });
 
   deletionDetector.stderr.on('data', (data) => {
-    process.stderr.write(`${colors.red}[Deletion Detector Error]${colors.reset} ${data}`);
+    const dataStr = data.toString();
+    // Python logging sends INFO/DEBUG to stderr by default
+    // Only show as error if it's actually an ERROR or CRITICAL level
+    if (dataStr.includes('ERROR') || dataStr.includes('CRITICAL') || dataStr.includes('Traceback')) {
+      process.stderr.write(`${colors.red}[Deletion Detector Error]${colors.reset} ${data}`);
+    } else if (dataStr.includes('WARNING')) {
+      process.stdout.write(`${colors.yellow}[Deletion Detector]${colors.reset} ${data}`);
+    } else {
+      // INFO, DEBUG, and other logs
+      process.stdout.write(`${colors.cyan}[Deletion Detector]${colors.reset} ${data}`);
+    }
   });
 
   deletionDetector.on('error', (error) => {

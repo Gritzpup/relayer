@@ -96,8 +96,8 @@ export class TwitchService implements PlatformService {
     });
 
     this.client.on('message', async (channel: string, tags: tmi.ChatUserstate, message: string, self: boolean) => {
-      logger.info(`TWITCH MSG: Channel: ${channel}, User: ${tags.username}, Self: ${self}, Message: "${message.substring(0, 50)}..."`);
-      logger.info(`TWITCH MSG: Current stored messages: ${this.recentMessages.size}`);
+      // // logger.info(`TWITCH MSG: Channel: ${channel}, User: ${tags.username}, Self: ${self}, Message: "${message.substring(0, 50)}..."`);
+      // // logger.info(`TWITCH MSG: Current stored messages: ${this.recentMessages.size}`);
       
       if (channel !== `#${config.twitch.channel}`) {
         logger.debug(`Skipping message from wrong channel: ${channel} (expected #${config.twitch.channel})`);
@@ -110,8 +110,8 @@ export class TwitchService implements PlatformService {
       const relayPattern = /^[🟦🔵💙🟢💚🔴❤️]\s*\[([^\]]+)\]\s*([^:]+):\s*(.*)$/;
       const relayMatch = message.match(relayPattern);
       
-      logger.info(`RELAY CHECK: Testing message: "${message}"`);
-      logger.info(`RELAY CHECK: Match result: ${relayMatch ? 'YES' : 'NO'}`);
+      // // logger.info(`RELAY CHECK: Testing message: "${message}"`);
+      // // logger.info(`RELAY CHECK: Match result: ${relayMatch ? 'YES' : 'NO'}`);
       
       if (relayMatch) {
         // Extract platform name (in Unicode bold), author (in Unicode bold), and content
@@ -123,7 +123,7 @@ export class TwitchService implements PlatformService {
         const platformStr = this.fromUnicodeBold(boldPlatformStr);
         const originalAuthor = this.fromUnicodeBold(boldAuthor);
         
-        logger.info(`RELAY CHECK: Platform=${platformStr}, Author=${originalAuthor}, Content=${originalContent}`);
+        // logger.info(`RELAY CHECK: Platform=${platformStr}, Author=${originalAuthor}, Content=${originalContent}`);
         const timestamp = new Date();
         
         // Store with the original author's name for reply detection
@@ -459,7 +459,7 @@ export class TwitchService implements PlatformService {
         
         // If this is a relayed message from another platform, store the original author info
         if (originalMessage && originalMessage.platform !== Platform.Twitch) {
-          logger.info(`TWITCH SEND: Storing relayed message from ${originalMessage.author} (${originalMessage.platform}) with ID ${messageId}`);
+          // logger.info(`TWITCH SEND: Storing relayed message from ${originalMessage.author} (${originalMessage.platform}) with ID ${messageId}`);
           
           // Store with the original author's name for reply detection
           this.storeRecentMessage(
@@ -611,7 +611,7 @@ export class TwitchService implements PlatformService {
       
       // Check if user is replying to the bot itself
       if (mentionedUser === config.twitch.username.toLowerCase()) {
-        logger.info(`REPLY DETECTION: User is replying to the bot, finding most recent relayed message`);
+        // logger.info(`REPLY DETECTION: User is replying to the bot, finding most recent relayed message`);
         
         // Find the most recent message from another platform
         let mostRecentRelayed: RecentMessage | undefined;
@@ -626,7 +626,7 @@ export class TwitchService implements PlatformService {
           }
           
           // Check if this message is from another platform
-          logger.info(`REPLY CHECK: Checking message: id=${msg.id}, platform=${msg.platform}, author=${msg.author}, hasValidPlatform=${!!msg.platform}`);
+          // logger.info(`REPLY CHECK: Checking message: id=${msg.id}, platform=${msg.platform}, author=${msg.author}, hasValidPlatform=${!!msg.platform}`);
           if (msg.platform && msg.platform !== Platform.Twitch) {
             // Update most recent if this is newer
             if (!mostRecentRelayed || msg.timestamp > mostRecentRelayed.timestamp) {
@@ -634,7 +634,7 @@ export class TwitchService implements PlatformService {
               logger.info(`REPLY CHECK: Found relayed message from ${msg.author} (${msg.platform})`);
             }
           } else {
-            logger.info(`REPLY CHECK: Skipping - platform=${msg.platform}, isTwitch=${msg.platform === Platform.Twitch}`);
+            // logger.info(`REPLY CHECK: Skipping - platform=${msg.platform}, isTwitch=${msg.platform === Platform.Twitch}`);
           }
         }
         
@@ -647,13 +647,13 @@ export class TwitchService implements PlatformService {
       } else {
         // Look for recent message from mentioned user (case-insensitive)
         const mentionedUserLower = mentionedUser.toLowerCase();
-        logger.info(`REPLY DETECTION: Looking for user "${mentionedUserLower}" in stored messages`);
+        // logger.info(`REPLY DETECTION: Looking for user "${mentionedUserLower}" in stored messages`);
         
         // Direct lookup with lowercase key (primary lookup)
         recentMessage = this.recentMessages.get(mentionedUserLower);
         
         if (recentMessage) {
-          logger.info(`REPLY DETECTION: Found direct message from ${mentionedUserLower} -> ${recentMessage.author}`);
+          // logger.info(`REPLY DETECTION: Found direct message from ${mentionedUserLower} -> ${recentMessage.author}`);
         } else {
           // Also try the exact username as typed (in case it was stored with original case)
           const mentionedUserFromNormalized = normalizedMessage.match(/^@(\w+)/)?.[1];
@@ -665,7 +665,7 @@ export class TwitchService implements PlatformService {
           }
           
           if (!recentMessage) {
-            logger.info(`REPLY DETECTION: No message found for @${mentionedUser} (tried keys: ${mentionedUserLower}${mentionedUserFromNormalized ? ', ' + mentionedUserFromNormalized : ''})`);
+            // logger.info(`REPLY DETECTION: No message found for @${mentionedUser} (tried keys: ${mentionedUserLower}${mentionedUserFromNormalized ? ', ' + mentionedUserFromNormalized : ''})`);
           }
         }
       }
@@ -726,7 +726,7 @@ export class TwitchService implements PlatformService {
       messageData.content = content.substring(0, 100) + '...';
     }
     
-    logger.info(`STORE MESSAGE: Stored key="${authorLower}" author="${author}" content="${messageData.content.substring(0, 50)}..."${platform ? ` from platform=${platform}` : ''}`);
+    // logger.info(`STORE MESSAGE: Stored key="${authorLower}" author="${author}" content="${messageData.content.substring(0, 50)}..."${platform ? ` from platform=${platform}` : ''}`);
     
     // More aggressive cleanup - keep only 5 minutes of messages and limit total size
     const MAX_MESSAGES = 50;  // Limit to 50 messages max
@@ -759,7 +759,7 @@ export class TwitchService implements PlatformService {
     }
     
     if (deletedCount > 0) {
-      logger.info(`STORE MESSAGE: Cleaned up ${deletedCount} old message entries (size: ${this.recentMessages.size})`);
+      // logger.info(`STORE MESSAGE: Cleaned up ${deletedCount} old message entries (size: ${this.recentMessages.size})`);
     }
   }
 }

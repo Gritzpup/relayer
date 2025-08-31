@@ -63,9 +63,9 @@ export class MessageMapper {
         if (sourcePlatform && replyToAuthor) {
           replyToMapping = await this.findMappingIdByAuthorAndPlatform(replyToAuthor, sourcePlatform);
           if (replyToMapping) {
-            logger.info(`TWITCH REPLY: Found cross-platform reply mapping: ${replyToMapping} for ${replyToAuthor} from ${sourcePlatform}`);
+            // logger.info(`TWITCH REPLY: Found cross-platform reply mapping: ${replyToMapping} for ${replyToAuthor} from ${sourcePlatform}`);
           } else {
-            logger.info(`TWITCH REPLY: No mapping found for ${replyToAuthor} from ${sourcePlatform}`);
+            // logger.info(`TWITCH REPLY: No mapping found for ${replyToAuthor} from ${sourcePlatform}`);
           }
         }
       } else {
@@ -73,27 +73,27 @@ export class MessageMapper {
         
         // First check if this is a reply to a bot message (has platform info extracted)
         if (replyToAuthor && replyToPlatform) {
-          logger.info(`REPLY CREATE: Detected reply to bot message - looking for ${replyToAuthor} from ${replyToPlatform}`);
+          // logger.info(`REPLY CREATE: Detected reply to bot message - looking for ${replyToAuthor} from ${replyToPlatform}`);
           const potentialMapping = await this.findMappingIdByAuthorAndPlatform(replyToAuthor, replyToPlatform);
           if (potentialMapping) {
             // Special handling: We found the original message mapping
             // Add the bot's message ID to this mapping so future lookups work
             await this.addPlatformMessage(potentialMapping, originalPlatform, replyToMessageId);
             replyToMapping = potentialMapping;
-            logger.info(`REPLY CREATE: Found mapping by author and platform: ${potentialMapping} for ${replyToAuthor} from ${replyToPlatform}`);
-            logger.info(`REPLY CREATE: Added bot message ${replyToMessageId} to mapping for future lookups`);
+            // logger.info(`REPLY CREATE: Found mapping by author and platform: ${potentialMapping} for ${replyToAuthor} from ${replyToPlatform}`);
+            // logger.info(`REPLY CREATE: Added bot message ${replyToMessageId} to mapping for future lookups`);
           } else {
-            logger.info(`REPLY CREATE: No mapping found for ${replyToAuthor} from ${replyToPlatform}`);
+            // logger.info(`REPLY CREATE: No mapping found for ${replyToAuthor} from ${replyToPlatform}`);
           }
         } else {
           // Not a reply to a bot message - do standard lookup
-          logger.info(`REPLY CREATE: Looking for mapping of reply-to message ${replyToMessageId} on ${originalPlatform} at ${new Date().toISOString()}`);
+          // logger.info(`REPLY CREATE: Looking for mapping of reply-to message ${replyToMessageId} on ${originalPlatform} at ${new Date().toISOString()}`);
           replyToMapping = await this.getMappingIdByPlatformMessage(originalPlatform, replyToMessageId);
           
           if (replyToMapping) {
-            logger.info(`REPLY CREATE: Found reply to message: ${replyToMessageId} maps to mapping ${replyToMapping} at ${new Date().toISOString()}`);
+            // logger.info(`REPLY CREATE: Found reply to message: ${replyToMessageId} maps to mapping ${replyToMapping} at ${new Date().toISOString()}`);
           } else {
-            logger.info(`REPLY CREATE: No mapping found for platform message ${originalPlatform}:${replyToMessageId} at ${new Date().toISOString()}`);
+            // logger.info(`REPLY CREATE: No mapping found for platform message ${originalPlatform}:${replyToMessageId} at ${new Date().toISOString()}`);
             
             // If still not found, try to find a mapping by content match (for native messages)
             if (replyToContent && replyToAuthor) {
@@ -160,9 +160,9 @@ export class MessageMapper {
       logger.error('Failed to archive message to database:', err)
     );
     
-    logger.info(`MAPPING CREATED: ${mappingId} for ${originalPlatform} message ${originalMessageId}${replyToMapping ? ` (reply to ${replyToMapping})` : ''}`);
+    // // logger.info(`MAPPING CREATED: ${mappingId} for ${originalPlatform} message ${originalMessageId}${replyToMapping ? ` (reply to ${replyToMapping})` : ''}`);
     if (replyToMapping) {
-      logger.info(`REPLY MAPPING: Message ${originalMessageId} from ${originalPlatform} is a reply linked to mapping ${replyToMapping}`);
+      // logger.info(`REPLY MAPPING: Message ${originalMessageId} from ${originalPlatform} is a reply linked to mapping ${replyToMapping}`);
     }
     
     return mappingId;
@@ -219,7 +219,7 @@ export class MessageMapper {
     }).catch(err => logger.error('Failed to track platform message in database:', err));
     
     const elapsed = Date.now() - startTime;
-    logger.info(`PLATFORM MESSAGE: Added ${platform} message ${messageId} to mapping ${mappingId} (took ${elapsed}ms)`);
+    // // logger.info(`PLATFORM MESSAGE: Added ${platform} message ${messageId} to mapping ${mappingId} (took ${elapsed}ms)`);
   }
 
   /**
@@ -259,7 +259,7 @@ export class MessageMapper {
       messageId: newMessageId
     }).catch(err => logger.error('Failed to update platform message in database:', err));
     
-    logger.info(`PLATFORM MESSAGE: Updated ${platform} message from ${oldMessageId} to ${newMessageId} in mapping ${mappingId}`);
+    // // logger.info(`PLATFORM MESSAGE: Updated ${platform} message from ${oldMessageId} to ${newMessageId} in mapping ${mappingId}`);
   }
 
   /**
@@ -342,30 +342,30 @@ export class MessageMapper {
   } | undefined> {
     const mapping = await messageDb.getMapping(mappingId);
     if (!mapping) {
-      logger.info(`getReplyToInfo: No mapping found for ${mappingId}`);
+      // logger.info(`getReplyToInfo: No mapping found for ${mappingId}`);
       return undefined;
     }
     
     if (!mapping.replyToMapping) {
-      logger.info(`getReplyToInfo: Mapping ${mappingId} is not a reply`);
+      // logger.info(`getReplyToInfo: Mapping ${mappingId} is not a reply`);
       return undefined;
     }
 
     const replyToMapping = await messageDb.getMapping(mapping.replyToMapping);
     if (!replyToMapping) {
-      logger.info(`getReplyToInfo: Reply-to mapping ${mapping.replyToMapping} not found`);
+      // logger.info(`getReplyToInfo: Reply-to mapping ${mapping.replyToMapping} not found`);
       return undefined;
     }
 
-    logger.info(`getReplyToInfo: Reply-to mapping has platform messages: ${JSON.stringify(replyToMapping.platformMessages)}`);
+    // logger.info(`getReplyToInfo: Reply-to mapping has platform messages: ${JSON.stringify(replyToMapping.platformMessages)}`);
     
     const targetMessageId = replyToMapping.platformMessages[targetPlatform];
     if (!targetMessageId) {
-      logger.info(`getReplyToInfo: No ${targetPlatform} message ID in reply-to mapping`);
+      // logger.info(`getReplyToInfo: No ${targetPlatform} message ID in reply-to mapping`);
       return undefined;
     }
 
-    logger.info(`getReplyToInfo: Found reply info for ${targetPlatform}: messageId=${targetMessageId}, author=${replyToMapping.author}`);
+    // logger.info(`getReplyToInfo: Found reply info for ${targetPlatform}: messageId=${targetMessageId}, author=${replyToMapping.author}`);
     
     return {
       messageId: targetMessageId,
@@ -391,7 +391,7 @@ export class MessageMapper {
     // Update content in database
     await messageDb.updateContent(mapping.id, newContent);
     
-    logger.info(`Updated content for ${platform}:${messageId} (mapping ${mapping.id})`);
+    // logger.info(`Updated content for ${platform}:${messageId} (mapping ${mapping.id})`);
   }
 
   /**
@@ -419,7 +419,7 @@ export class MessageMapper {
       }
     }
     
-    logger.info(`Found ${mappedReplies.length} replies to mapping ${mappingId}`);
+    // logger.info(`Found ${mappedReplies.length} replies to mapping ${mappingId}`);
     return mappedReplies;
   }
 
@@ -466,7 +466,7 @@ export class MessageMapper {
       logger.error('Failed to remove mapping from database:', err)
     );
     
-    logger.info(`Removed mapping ${mappingId}`);
+    // logger.info(`Removed mapping ${mappingId}`);
   }
 
   private generateMappingId(): string {

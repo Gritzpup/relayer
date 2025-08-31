@@ -47,11 +47,11 @@ export class DiscordService implements PlatformService {
   }
 
   private setupEventHandlers(): void {
-    logger.info('[DISCORD] Setting up event handlers...');
-    console.log('[DISCORD] Initializing Discord event handlers');
+    // logger.info('[DISCORD] Setting up event handlers...');
+    // console.log('[DISCORD] Initializing Discord event handlers');
     
     this.client.on('ready', () => {
-      logger.info(`[DISCORD] ✅ Connected successfully as ${this.client.user?.tag}`);
+      // logger.info(`[DISCORD] ✅ Connected successfully as ${this.client.user?.tag}`);
       console.log(`[DISCORD] Ready event fired - bot is connected as ${this.client.user?.tag}`);
       console.log(`[DISCORD] Bot ID: ${this.client.user?.id}`);
       console.log(`[DISCORD] Watching channels:`, Object.entries(channelMappings).map(([name, map]) => `${name}: ${map.discord}`));
@@ -60,11 +60,11 @@ export class DiscordService implements PlatformService {
 
     this.client.on('messageCreate', async (message: Message) => {
       // Debug logging to see ALL messages
-      console.log(`[DISCORD MESSAGE] Received from ${message.author.username} (bot=${message.author.bot}) in channel ${message.channel.id}`);
-      logger.debug(`[DEBUG] Discord message received: author="${message.author.username}" (bot=${message.author.bot}, id=${message.author.id}) channel=${message.channel.id} content="${message.content?.substring(0, 50)}..."`);
+      // console.log(`[DISCORD MESSAGE] Received from ${message.author.username} (bot=${message.author.bot}) in channel ${message.channel.id}`);
+      // logger.debug(`[DEBUG] Discord message received: author="${message.author.username}" (bot=${message.author.bot}, id=${message.author.id}) channel=${message.channel.id} content="${message.content?.substring(0, 50)}..."`);
       
       if (message.author.bot) {
-        logger.debug(`[DEBUG] Skipping bot message from ${message.author.username}`);
+        // logger.debug(`[DEBUG] Skipping bot message from ${message.author.username}`);
         return;
       }
       
@@ -73,12 +73,12 @@ export class DiscordService implements PlatformService {
         channelMappings[name].discord === message.channel.id
       );
       if (!channelName) {
-        logger.debug(`[DEBUG] Skipping message from unmapped channel ${message.channel.id}`);
+        // logger.debug(`[DEBUG] Skipping message from unmapped channel ${message.channel.id}`);
         return; // Not a mapped channel
       }
 
       this.status.messagesReceived++;
-      logger.info(`Discord message in #${channelName}: "${message.content}"`);
+      // logger.info(`Discord message in #${channelName}: "${message.content}"`);
       logPlatformMessage('Discord', 'in', message.content, message.author.username);
 
       if (this.messageHandler) {
@@ -88,7 +88,7 @@ export class DiscordService implements PlatformService {
         if (relayMessage.attachments) {
           const customEmojis = relayMessage.attachments.filter(a => a.type === 'custom-emoji');
           if (customEmojis.length > 0) {
-            logger.info(`Custom emojis detected: ${customEmojis.map(e => e.filename).join(', ')}`);
+            // logger.info(`Custom emojis detected: ${customEmojis.map(e => e.filename).join(', ')}`);
           }
         }
         
@@ -236,13 +236,13 @@ export class DiscordService implements PlatformService {
 
     // Add reply reference if provided
     if (replyToMessageId) {
-      logger.info(`DISCORD: Setting reply to message ${replyToMessageId}`);
+      // logger.info(`DISCORD: Setting reply to message ${replyToMessageId}`);
       messageOptions.reply = { 
         messageReference: replyToMessageId,
         failIfNotExists: false  // Don't fail if the message was deleted
       };
     } else {
-      logger.info(`DISCORD: No replyToMessageId provided`);
+      // logger.info(`DISCORD: No replyToMessageId provided`);
     }
 
     if (attachments && attachments.length > 0) {

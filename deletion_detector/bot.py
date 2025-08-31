@@ -166,7 +166,10 @@ async def periodic_check():
         check_count += 1
         
         try:
-            logger.debug(f"[PERIODIC CHECK #{check_count}] Checking {len(message_cache)} cached messages")
+            # Only log debug if we have a meaningful number of messages
+            if len(message_cache) > 1:
+                logger.debug(f"[PERIODIC CHECK #{check_count}] Checking {len(message_cache)} cached messages")
+            
             current_time = datetime.now()
             messages_to_check = []
             
@@ -192,7 +195,8 @@ async def periodic_check():
                     # Remove very old messages from cache
                     del message_cache[msg_id]
             
-            if messages_to_check:
+            # Only log if we have actual messages to check
+            if messages_to_check and len(messages_to_check) > 1:
                 bot_msg_count = sum(1 for _, _, is_bot in messages_to_check if is_bot)
                 logger.info(f"Checking {len(messages_to_check)} messages for deletion (including {bot_msg_count} bot messages)")
             
