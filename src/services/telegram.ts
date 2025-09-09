@@ -83,6 +83,18 @@ export class TelegramService implements PlatformService {
       }
       if (msg.from?.is_bot) return;
       
+      // Check if this is a relayed message (has platform prefix with or without emoji)
+      // Pattern handles Unicode bold formatting used by the bot
+      // Example: "🔵 [𝗧𝗲𝗹𝗲𝗴𝗿𝗮𝗺] 𝗚𝗿𝗶𝘁𝘇𝗽𝘂𝗽: test"
+      const messageText = msg.text || msg.caption || '';
+      const relayPattern = /^[🟦🔵💙🟢💚🔴❤️]\s*\[([^\]]+)\]\s*([^:]+):\s*(.*)$/;
+      const relayMatch = messageText.match(relayPattern);
+      
+      if (relayMatch) {
+        logger.debug(`TELEGRAM RELAY SKIP: Detected relayed message from ${relayMatch[1]}, skipping to prevent loop`);
+        return; // Skip relaying it back
+      }
+      
       // Get the topic/thread ID (for supergroups with topics)
       let threadId = msg.message_thread_id || undefined;
       let channelName: string | undefined;

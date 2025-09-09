@@ -184,6 +184,12 @@ export class RelayManager {
     const targetPlatforms = this.getTargetPlatforms(message.platform);
     
     for (const targetPlatform of targetPlatforms) {
+      // Skip relaying if this would create a duplicate loop
+      if (this.shouldSkipRelay(message, targetPlatform)) {
+        logger.debug(`Skipping relay from ${message.platform} to ${targetPlatform} to prevent duplicate loop`);
+        continue;
+      }
+      
       await this.relayToPlatform(message, targetPlatform, mappingId);
     }
   }
@@ -648,6 +654,30 @@ export class RelayManager {
 
   private getTargetPlatforms(sourcePlatform: Platform): Platform[] {
     return Array.from(this.services.keys()).filter(platform => platform !== sourcePlatform);
+  }
+
+  private shouldSkipRelay(message: RelayMessage, targetPlatform: Platform): boolean {
+    // Check if this is a Twitch message going back to its origin platform
+    if (message.platform === Platform.Twitch && targetPlatform === Platform.Telegram) {
+      // Check multiple patterns for relayed messages
+      const telegramPatterns = [
+        /^[🟦🔵💙]\s*\[.*[Tt]elegram.*\]/,  // Standard emoji + [Telegram]
+        /^🔵\s*\*\*\[Telegram\]\*\*/,        // Discord bold format
+        /^🔵\s*\[𝐓𝐞𝐥𝐞𝐠𝐫𝐚𝐦\]/,         // Unicode bold Telegram
+        /^🔵\s*\[Telegram\]/                 // Simple format
+      ];
+      
+      const isFromTelegram = telegramPatterns.some(pattern => pattern.test(message.content));
+      
+      if (isFromTelegram) {
+        logger.info(`SKIP RELAY: Twitch message originated from Telegram: "${message.content.substring(0, 80)}"`);
+        return true; // Skip sending back to Telegram
+      } else {
+        logger.info(`ALLOW RELAY: Native Twitch message going to Telegram: "${message.content.substring(0, 80)}"`);
+      }
+    }
+    
+    return false; // Don't skip - proceed with relay
   }
 
   private isDuplicateMessage(message: RelayMessage): boolean {

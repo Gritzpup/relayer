@@ -68,6 +68,17 @@ export class DiscordService implements PlatformService {
         return;
       }
       
+      // Check if this is a relayed message (has platform prefix with or without emoji)
+      // Pattern handles Unicode bold formatting used by the bot
+      // Example: "🔵 [𝗧𝗲𝗹𝗲𝗴𝗿𝗮𝗺] 𝗚𝗿𝗶𝘁𝘇𝗽𝘂𝗽: test"
+      const relayPattern = /^[🟦🔵💙🟢💚🔴❤️]\s*\[([^\]]+)\]\s*([^:]+):\s*(.*)$/;
+      const relayMatch = message.content.match(relayPattern);
+      
+      if (relayMatch) {
+        logger.debug(`DISCORD RELAY SKIP: Detected relayed message from ${relayMatch[1]}, skipping to prevent loop`);
+        return; // Skip relaying it back
+      }
+      
       // Check if this channel is in our mapping
       const channelName = Object.keys(channelMappings).find(name => 
         channelMappings[name].discord === message.channel.id

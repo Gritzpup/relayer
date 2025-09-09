@@ -110,8 +110,8 @@ export class TwitchService implements PlatformService {
       const relayPattern = /^[🟦🔵💙🟢💚🔴❤️]\s*\[([^\]]+)\]\s*([^:]+):\s*(.*)$/;
       const relayMatch = message.match(relayPattern);
       
-      // // logger.info(`RELAY CHECK: Testing message: "${message}"`);
-      // // logger.info(`RELAY CHECK: Match result: ${relayMatch ? 'YES' : 'NO'}`);
+      logger.info(`TWITCH RELAY CHECK: Testing message: "${message}"`);
+      logger.info(`TWITCH RELAY CHECK: Match result: ${relayMatch ? 'YES - SKIPPING' : 'NO - PROCESSING'}`);
       
       if (relayMatch) {
         // Extract platform name (in Unicode bold), author (in Unicode bold), and content
