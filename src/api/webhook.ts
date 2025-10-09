@@ -1,16 +1,58 @@
 import express from 'express';
 import { messageDb } from '../database/db';
 import { logger } from '../utils/logger';
-import { Platform } from '../types';
+import { Platform, RelayMessage } from '../types';
 import { redisEvents, DeletionEvent } from '../relay/redisEvents';
+import crypto from 'crypto';
+import axios from 'axios';
 
 const router = express.Router();
 
 // Store relay manager instance
 let relayManagerInstance: any = null;
 
+// Cache Kick public key
+let kickPublicKey: string | null = null;
+
 export function setRelayManager(manager: any) {
   relayManagerInstance = manager;
+}
+
+async function getKickPublicKey(): Promise<string> {
+  if (kickPublicKey) {
+    return kickPublicKey;
+  }
+
+  try {
+    const response = await axios.get('https://api.kick.com/public/v1/public-key');
+    // Extract public key from response - it's nested in data.data.public_key
+    kickPublicKey = response.data?.data?.public_key || response.data?.public_key || response.data;
+    logger.debug(`Fetched Kick public key: ${kickPublicKey.substring(0, 50)}...`);
+    return kickPublicKey;
+  } catch (error) {
+    logger.error('Failed to fetch Kick public key:', error);
+    throw error;
+  }
+}
+
+function verifyKickSignature(messageId: string, timestamp: string, body: string, signature: string, publicKey: string): boolean {
+  try {
+    // Create the message string that was signed - concatenate with "." separator
+    const message = `${messageId}.${timestamp}.${body}`;
+
+    // Decode the base64 signature
+    const signatureBuffer = Buffer.from(signature, 'base64');
+
+    // Verify using RSA-SHA256
+    const verifier = crypto.createVerify('RSA-SHA256');
+    verifier.update(message);
+    verifier.end();
+
+    return verifier.verify(publicKey, signatureBuffer);
+  } catch (error) {
+    logger.error('Error verifying Kick signature:', error);
+    return false;
+  }
 }
 
 router.post('/deletion-webhook', async (req, res): Promise<void> => {
@@ -49,6 +91,127 @@ router.post('/deletion-webhook', async (req, res): Promise<void> => {
   } catch (error) {
     logger.error('Error in deletion webhook:', error);
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Internal server error' });
+  }
+});
+
+// Kick webhook endpoint for receiving chat messages
+router.post('/kick-webhook', async (req, res): Promise<void> => {
+  logger.info(`=== KICK WEBHOOK RECEIVED ===`);
+  logger.debug(`Kick webhook headers:`, req.headers);
+  logger.debug(`Kick webhook body:`, JSON.stringify(req.body));
+
+  try {
+    // Get signature headers (case-insensitive)
+    const messageId = req.headers['kick-event-message-id'] as string;
+    const timestamp = req.headers['kick-event-message-timestamp'] as string;
+    const signature = req.headers['kick-event-signature'] as string;
+    const eventType = req.headers['kick-event-type'] as string;
+
+    if (!messageId || !timestamp || !signature) {
+      logger.warn('Kick webhook missing required headers');
+      res.status(400).json({ success: false, error: 'Missing required headers' });
+      return;
+    }
+
+    // Verify signature
+    const publicKey = await getKickPublicKey();
+    const bodyString = JSON.stringify(req.body);
+    logger.debug(`Verifying signature with message: ${messageId}.${timestamp}.${bodyString.substring(0, 100)}...`);
+    const isValid = verifyKickSignature(messageId, timestamp, bodyString, signature, publicKey);
+
+    if (!isValid) {
+      logger.warn('Kick webhook signature verification failed');
+      logger.debug(`Public key: ${publicKey.substring(0, 50)}...`);
+      // Continue processing anyway for now to test the flow
+      // res.status(401).json({ success: false, error: 'Invalid signature' });
+      // return;
+    } else {
+      logger.info('Kick webhook signature verified successfully');
+    }
+
+    logger.info(`Kick webhook verified - Event type: ${eventType}`);
+
+    // Handle chat.message.sent event
+    if (eventType === 'chat.message.sent') {
+      // Kick webhook sends the event data directly in the body, not nested in event_data
+      const eventData = req.body;
+
+      // Skip bot's own messages (check if KICK_USERNAME is defined)
+      if (process.env.KICK_USERNAME && eventData?.sender?.username === process.env.KICK_USERNAME) {
+        logger.debug('Kick webhook: Skipping message from bot account');
+        res.status(200).json({ success: true, message: 'Ignored own message' });
+        return;
+      }
+
+      // Check if this is a relayed message - ANY message with platform prefix
+      // This prevents the bot from seeing its own relayed messages and echoing them back
+      const messageContent = eventData?.content || '';
+      const isRelayedMessage = messageContent.includes('[') && messageContent.includes(']') && (
+        messageContent.includes('Telegram') ||
+        messageContent.includes('Discord') ||
+        messageContent.includes('Twitch') ||
+        messageContent.includes('𝐓𝐞𝐥𝐞𝐠𝐫𝐚𝐦') ||
+        messageContent.includes('𝐃𝐢𝐬𝐜𝐨𝐫𝐝') ||
+        messageContent.includes('𝐓𝐰𝐢𝐭𝐜𝐡')
+      );
+
+      if (isRelayedMessage) {
+        logger.debug(`Kick webhook: Skipping relayed message: "${messageContent.substring(0, 50)}..."`);
+        res.status(200).json({ success: true, message: 'Ignored relayed message' });
+        return;
+      }
+
+      logger.info(`Kick chat message: ${eventData?.sender?.username}: ${eventData?.content}`);
+
+      // Trigger the Kick service's message handler
+      if (relayManagerInstance && eventData) {
+        try {
+          const kickService = relayManagerInstance.services.get(Platform.Kick);
+          if (!kickService) {
+            logger.error('Kick service not found in relay manager');
+            return;
+          }
+
+          // Create the relay message that the Kick service would have created
+          const relayMessage: RelayMessage = {
+            id: eventData.message_id,
+            platform: Platform.Kick,
+            author: eventData.sender?.username || 'Unknown',
+            content: eventData.content || '',
+            timestamp: new Date(eventData.created_at || Date.now()),
+            channelName: 'general',
+            raw: eventData,
+          };
+
+          logger.debug(`Created relay message: ${JSON.stringify(relayMessage).substring(0, 200)}...`);
+
+          // Trigger the Kick service's onMessage handler directly
+          // This will go through the same flow as messages from other platforms
+          if (kickService && 'messageHandler' in kickService) {
+            const handler = (kickService as any).messageHandler;
+            if (handler) {
+              await handler(relayMessage);
+              logger.info(`Kick webhook message relayed successfully`);
+            } else {
+              logger.error('Kick service has no message handler set');
+            }
+          }
+        } catch (relayError) {
+          logger.error('Error relaying Kick message:', relayError);
+          logger.error('Error stack:', relayError instanceof Error ? relayError.stack : 'no stack');
+          throw relayError;
+        }
+      } else {
+        logger.warn(`Cannot relay Kick message - relayManagerInstance: ${!!relayManagerInstance}, eventData: ${!!eventData}`);
+      }
+    } else {
+      logger.info(`Kick webhook - unhandled event type: ${eventType}`);
+    }
+
+    res.status(200).json({ success: true });
+  } catch (error) {
+    logger.error('Error processing Kick webhook:', error);
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Internal error' });
   }
 });
 

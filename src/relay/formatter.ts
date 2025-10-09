@@ -56,6 +56,10 @@ export class MessageFormatter {
           return '🔵'; // Blue circle for Discord
         case Platform.Twitch:
           return '🔴'; // Red circle for Twitch
+        case Platform.Kick:
+          return '🟢'; // Green circle for Kick
+        case Platform.YouTube:
+          return '🔴'; // Red circle for YouTube
         case Platform.Telegram:
           return '✈️'; // Keep paper plane for Telegram (shouldn't happen in relay)
         default:
@@ -72,6 +76,10 @@ export class MessageFormatter {
           return '🔵'; // Blue circle for Telegram
         case Platform.Twitch:
           return '🔴'; // Red circle for Twitch
+        case Platform.Kick:
+          return '🟢'; // Green circle for Kick
+        case Platform.YouTube:
+          return '🔴'; // Red circle for YouTube
         default:
           return '💬'; // Default chat bubble
       }
@@ -84,6 +92,10 @@ export class MessageFormatter {
           return '🔴'; // Red circle for Discord
         case Platform.Telegram:
           return '🔵'; // Blue circle for Telegram
+        case Platform.Kick:
+          return '🟢'; // Green circle for Kick
+        case Platform.YouTube:
+          return '🔴'; // Red circle for YouTube
         case Platform.Twitch:
           return '🎮'; // Gaming controller for Twitch (shouldn't happen in relay)
         default:
@@ -99,6 +111,10 @@ export class MessageFormatter {
         return '🟣'; // Purple circle for Telegram
       case Platform.Twitch:
         return '🔴'; // Red circle for Twitch
+      case Platform.Kick:
+        return '🟢'; // Green circle for Kick
+      case Platform.YouTube:
+        return '🔴'; // Red circle for YouTube
       default:
         return '💬'; // Default chat bubble
     }
@@ -117,18 +133,22 @@ export class MessageFormatter {
     if (config.relay.prefixEnabled) {
       // Use emoji icons for all platforms
       const icon = this.getPlatformIcon(message.platform, targetPlatform);
-      
+
       if (targetPlatform === Platform.Twitch) {
         // Twitch: Use Unicode bold characters for platform tags and usernames
         const boldPlatformTag = this.toUnicodeBold(`[${message.platform}]`);
         const boldAuthor = this.toUnicodeBold(author);
         const prefix = `${icon} ${boldPlatformTag} ${boldAuthor}`;
         formattedContent = `${prefix}: ${formattedContent}`;
+      } else if (targetPlatform === Platform.Kick || targetPlatform === Platform.YouTube) {
+        // Kick/YouTube: Use simple formatting without emojis (limited rich formatting support)
+        const prefix = `[${message.platform}] ${author}`;
+        formattedContent = `${prefix}: ${formattedContent}`;
       } else {
         // Add bold formatting for platform tags and usernames based on target platform
         let platformTag = `[${message.platform}]`;
         let formattedAuthor = author;
-        
+
         if (targetPlatform === Platform.Discord) {
           platformTag = `**[${message.platform}]**`; // Markdown bold for Discord
           formattedAuthor = `**${author}**`; // Bold username for Discord
@@ -136,7 +156,7 @@ export class MessageFormatter {
           platformTag = `<b>[${message.platform}]</b>`; // HTML bold for Telegram
           formattedAuthor = `<b>${author}</b>`; // Bold username for Telegram
         }
-        
+
         const prefix = `${icon} ${platformTag} ${formattedAuthor}`;
         formattedContent = `${prefix}: ${formattedContent}`;
       }
@@ -153,6 +173,13 @@ export class MessageFormatter {
         replyAuthor = `${replyIcon} ${boldPlatformTag} ${replyAuthor}`;
       }
       formattedContent = `↩️ Replying to ${replyAuthor}\n\n${formattedContent}`;
+    } else if (replyInfo && targetPlatform === Platform.Kick) {
+      // For Kick, add simple reply context without emojis
+      let replyAuthor = replyInfo.author;
+      if (replyInfo.platform) {
+        replyAuthor = `[${replyInfo.platform}] ${replyAuthor}`;
+      }
+      formattedContent = `Replying to ${replyAuthor}: ${formattedContent}`;
     } else if (replyInfo && targetPlatform === Platform.Discord) {
       // For Discord, add reply context when we have replyInfo
       // This happens when source is Twitch or when we can't link as native reply
@@ -182,8 +209,8 @@ export class MessageFormatter {
     }
     // For Telegram with proper message ID, we'll use reply_to_message_id in sendMessage
 
-    // Replace URLs with "(file attachment:unknown)" when sending to Twitch from Discord/Telegram
-    if (targetPlatform === Platform.Twitch && 
+    // Replace URLs with "(file attachment:unknown)" when sending to Twitch/Kick/YouTube from Discord/Telegram
+    if ((targetPlatform === Platform.Twitch || targetPlatform === Platform.Kick || targetPlatform === Platform.YouTube) &&
         (message.platform === Platform.Discord || message.platform === Platform.Telegram)) {
       formattedContent = this.replaceUrlsForTwitch(formattedContent);
     }
@@ -207,38 +234,42 @@ export class MessageFormatter {
     const formattedAttachments = attachments.map(att => {
       switch (att.type) {
         case 'image':
-          if (targetPlatform === Platform.Twitch && (sourcePlatform === Platform.Discord || sourcePlatform === Platform.Telegram)) {
+          if ((targetPlatform === Platform.Twitch || targetPlatform === Platform.Kick || targetPlatform === Platform.YouTube) &&
+              (sourcePlatform === Platform.Discord || sourcePlatform === Platform.Telegram)) {
             return '(file attachment:unknown)';
           }
-          return targetPlatform === Platform.Twitch && att.url ? att.url : '[Image]';
+          return (targetPlatform === Platform.Twitch || targetPlatform === Platform.Kick || targetPlatform === Platform.YouTube) && att.url ? att.url : '[Image]';
         case 'video':
-          if (targetPlatform === Platform.Twitch && (sourcePlatform === Platform.Discord || sourcePlatform === Platform.Telegram)) {
+          if ((targetPlatform === Platform.Twitch || targetPlatform === Platform.Kick || targetPlatform === Platform.YouTube) &&
+              (sourcePlatform === Platform.Discord || sourcePlatform === Platform.Telegram)) {
             return '(file attachment:unknown)';
           }
-          return targetPlatform === Platform.Twitch && att.url ? att.url : '[Video]';
+          return (targetPlatform === Platform.Twitch || targetPlatform === Platform.Kick || targetPlatform === Platform.YouTube) && att.url ? att.url : '[Video]';
         case 'file':
-          if (targetPlatform === Platform.Twitch && (sourcePlatform === Platform.Discord || sourcePlatform === Platform.Telegram)) {
+          if ((targetPlatform === Platform.Twitch || targetPlatform === Platform.Kick || targetPlatform === Platform.YouTube) &&
+              (sourcePlatform === Platform.Discord || sourcePlatform === Platform.Telegram)) {
             return '(file attachment:unknown)';
           }
           return `[File: ${att.filename || 'attachment'}]`;
         case 'sticker':
           // For Discord, don't add to text (will show as attachment)
           if (targetPlatform === Platform.Discord) return '';
-          // For Twitch, show emoji if available, otherwise [Sticker]
+          // For Twitch, Kick, and Telegram, show sticker name if available
           if (att.data) {
-            const emoji = att.data.toString();
-            return emoji || '[Sticker]';
+            const stickerName = att.data.toString();
+            return `[Sticker: ${stickerName}]`;
           }
           return '[Sticker]';
         case 'gif':
-          if (targetPlatform === Platform.Twitch && (sourcePlatform === Platform.Discord || sourcePlatform === Platform.Telegram)) {
+          if ((targetPlatform === Platform.Twitch || targetPlatform === Platform.Kick || targetPlatform === Platform.YouTube) &&
+              (sourcePlatform === Platform.Discord || sourcePlatform === Platform.Telegram)) {
             return '(file attachment:unknown)';
           }
-          return targetPlatform === Platform.Twitch && att.url ? att.url : '[GIF]';
+          return (targetPlatform === Platform.Twitch || targetPlatform === Platform.Kick || targetPlatform === Platform.YouTube) && att.url ? att.url : '[GIF]';
         case 'custom-emoji':
           // For Discord/Telegram, don't add to text (will show as attachment)
           if (targetPlatform === Platform.Discord || targetPlatform === Platform.Telegram) return '';
-          // For Twitch, just show [emoji] since custom emojis can't be displayed
+          // For Twitch, Kick, and YouTube, just show [emoji] since custom emojis can't be displayed
           return '[emoji]';
         default:
           return '[Attachment]';
@@ -253,6 +284,8 @@ export class MessageFormatter {
       [Platform.Discord]: 2000,
       [Platform.Telegram]: 4096,
       [Platform.Twitch]: 10000, // Twitch service handles splitting, so we allow longer messages
+      [Platform.Kick]: 500, // Kick has a 500 character limit for chat messages
+      [Platform.YouTube]: 200, // YouTube live chat has a 200 character limit
     };
 
     const maxLength = maxLengths[platform];

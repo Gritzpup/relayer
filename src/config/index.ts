@@ -19,6 +19,22 @@ export interface Config {
     clientId?: string;
     useApiForChat?: boolean;
   };
+  kick?: {
+    channel: string;
+    clientId?: string;
+    clientSecret?: string;
+    username?: string;
+    token?: string;
+    webhookUrl?: string;
+  };
+  youtube?: {
+    channelId: string;
+    liveChatId?: string;
+    clientId?: string;
+    clientSecret?: string;
+    refreshToken?: string;
+    accessToken?: string;
+  };
   relay: {
     prefixEnabled: boolean;
     attachmentsEnabled: boolean;
@@ -28,6 +44,8 @@ export interface Config {
       discord?: string;
       telegram?: string;
       twitch?: string;
+      kick?: string;
+      youtube?: string;
     };
   };
   logging: {
@@ -67,15 +85,19 @@ function getCustomEmojis(): Config['relay']['customEmojis'] | undefined {
   const discordEmoji = process.env.CUSTOM_EMOJI_DISCORD;
   const telegramEmoji = process.env.CUSTOM_EMOJI_TELEGRAM;
   const twitchEmoji = process.env.CUSTOM_EMOJI_TWITCH;
-  
-  if (!discordEmoji && !telegramEmoji && !twitchEmoji) {
+  const kickEmoji = process.env.CUSTOM_EMOJI_KICK;
+  const youtubeEmoji = process.env.CUSTOM_EMOJI_YOUTUBE;
+
+  if (!discordEmoji && !telegramEmoji && !twitchEmoji && !kickEmoji && !youtubeEmoji) {
     return undefined;
   }
-  
+
   return {
     discord: discordEmoji,
     telegram: telegramEmoji,
     twitch: twitchEmoji,
+    kick: kickEmoji,
+    youtube: youtubeEmoji,
   };
 }
 
@@ -114,6 +136,10 @@ export const channelMappings: ChannelMappings = {
   'tech': {
     discord: '1405218889960394986',
     telegram: '4680'
+  },
+  'food': {
+    discord: '1423296609667649618',
+    telegram: '23039'
   }
 };
 
@@ -133,6 +159,22 @@ export const config: Config = {
     clientId: getEnvVar('TWITCH_CLIENT_ID', ''),
     useApiForChat: getEnvBool('TWITCH_USE_API_FOR_CHAT', true),
   },
+  kick: process.env.KICK_CHANNEL ? {
+    channel: getEnvVar('KICK_CHANNEL'),
+    clientId: process.env.KICK_CLIENT_ID,
+    clientSecret: process.env.KICK_CLIENT_SECRET,
+    username: process.env.KICK_USERNAME,
+    token: process.env.KICK_TOKEN,
+    webhookUrl: process.env.KICK_WEBHOOK_URL,
+  } : undefined,
+  youtube: process.env.YOUTUBE_CHANNEL_ID ? {
+    channelId: getEnvVar('YOUTUBE_CHANNEL_ID'),
+    liveChatId: process.env.YOUTUBE_LIVE_CHAT_ID,
+    clientId: process.env.YOUTUBE_CLIENT_ID,
+    clientSecret: process.env.YOUTUBE_CLIENT_SECRET,
+    refreshToken: process.env.YOUTUBE_REFRESH_TOKEN,
+    accessToken: process.env.YOUTUBE_ACCESS_TOKEN,
+  } : undefined,
   relay: {
     prefixEnabled: getEnvBool('RELAY_PREFIX_ENABLED', true),
     attachmentsEnabled: getEnvBool('RELAY_ATTACHMENTS', true),

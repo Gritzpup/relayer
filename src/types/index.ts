@@ -2,6 +2,8 @@ export enum Platform {
   Discord = 'Discord',
   Telegram = 'Telegram',
   Twitch = 'Twitch',
+  Kick = 'Kick',
+  YouTube = 'YouTube',
 }
 
 export interface RelayMessage {
@@ -54,6 +56,7 @@ export type DeleteHandler = (platform: Platform, messageId: string, isAdminDelet
 export interface ChannelMapping {
   discord: string;
   telegram: string | null;
+  kick?: string | null;
 }
 
 export interface ChannelMappings {
