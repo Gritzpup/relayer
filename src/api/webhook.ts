@@ -143,17 +143,11 @@ router.post('/kick-webhook', async (req, res): Promise<void> => {
         return;
       }
 
-      // Check if this is a relayed message - ANY message with platform prefix
+      // Check if this is a relayed message - messages that START with platform prefix
       // This prevents the bot from seeing its own relayed messages and echoing them back
       const messageContent = eventData?.content || '';
-      const isRelayedMessage = messageContent.includes('[') && messageContent.includes(']') && (
-        messageContent.includes('Telegram') ||
-        messageContent.includes('Discord') ||
-        messageContent.includes('Twitch') ||
-        messageContent.includes('𝐓𝐞𝐥𝐞𝐠𝐫𝐚𝐦') ||
-        messageContent.includes('𝐃𝐢𝐬𝐜𝐨𝐫𝐝') ||
-        messageContent.includes('𝐓𝐰𝐢𝐭𝐜𝐡')
-      );
+      const isRelayedMessage = /^\[?(Telegram|Discord|Twitch|Kick|YouTube|𝐓𝐞𝐥𝐞𝐠𝐫𝐚𝐦|𝐃𝐢𝐬𝐜𝐨𝐫𝐝|𝐓𝐰𝐢𝐭𝐜𝐡|𝐊𝐢𝐜𝐤|𝐘𝐨𝐮𝐓𝐮𝐛𝐞)\]/.test(messageContent) ||
+        /^(🔵|🟣|🔴|🟢|✈️|🎮|💬)/.test(messageContent);
 
       if (isRelayedMessage) {
         logger.debug(`Kick webhook: Skipping relayed message: "${messageContent.substring(0, 50)}..."`);
@@ -172,6 +166,19 @@ router.post('/kick-webhook', async (req, res): Promise<void> => {
             return;
           }
 
+          // Check if this message is a reply
+          let replyTo: RelayMessage['replyTo'] | undefined;
+          if (eventData.replies_to) {
+            // Kick provides reply information in replies_to field
+            replyTo = {
+              messageId: eventData.replies_to.message_id || eventData.replies_to.id || '',
+              author: eventData.replies_to.sender?.username || eventData.replies_to.username || 'Unknown',
+              content: eventData.replies_to.content || '',
+              platform: Platform.Kick,
+            };
+            logger.debug(`Kick reply detected: replying to ${replyTo.author}: "${replyTo.content.substring(0, 30)}..."`);
+          }
+
           // Create the relay message that the Kick service would have created
           const relayMessage: RelayMessage = {
             id: eventData.message_id,
@@ -180,6 +187,7 @@ router.post('/kick-webhook', async (req, res): Promise<void> => {
             content: eventData.content || '',
             timestamp: new Date(eventData.created_at || Date.now()),
             channelName: 'general',
+            replyTo,
             raw: eventData,
           };
 

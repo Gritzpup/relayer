@@ -763,9 +763,15 @@ export class TelegramService implements PlatformService {
 
     try {
       if (attachments && attachments.length > 0) {
-        // Separate custom emojis from other attachments
+        // Separate custom emojis and Lottie stickers from other attachments
         const customEmojis = attachments.filter(a => a.type === 'custom-emoji');
-        const otherAttachments = attachments.filter(a => a.type !== 'custom-emoji');
+        const lottieStickers = attachments.filter(a => a.type === 'sticker' && a.mimeType === 'application/json');
+        const otherAttachments = attachments.filter(a => a.type !== 'custom-emoji' && !(a.type === 'sticker' && a.mimeType === 'application/json'));
+        
+        // Log Lottie stickers that are being skipped
+        if (lottieStickers.length > 0) {
+          logger.info(`Skipping ${lottieStickers.length} Lottie sticker(s) in Telegram - will show as text only`);
+        }
         
         // Send custom emojis as a single message with multiple photos if possible
         if (customEmojis.length > 0) {
@@ -804,7 +810,7 @@ export class TelegramService implements PlatformService {
         for (const attachment of otherAttachments) {
           try {
             let msg: TelegramBot.Message | undefined;
-            if (attachment.type === 'image' || attachment.type === 'gif') {
+            if (attachment.type === 'image' || attachment.type === 'gif' || attachment.type === 'sticker') {
               if (attachment.url) {
                 msg = await sendWithRetry(() => this.bot.sendPhoto(chatId, attachment.url!, { caption: content, ...messageOptions }));
               } else if (attachment.data) {

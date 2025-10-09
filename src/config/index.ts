@@ -34,6 +34,7 @@ export interface Config {
     clientSecret?: string;
     refreshToken?: string;
     accessToken?: string;
+    pollingInterval?: number;
   };
   relay: {
     prefixEnabled: boolean;
@@ -174,6 +175,7 @@ export const config: Config = {
     clientSecret: process.env.YOUTUBE_CLIENT_SECRET,
     refreshToken: process.env.YOUTUBE_REFRESH_TOKEN,
     accessToken: process.env.YOUTUBE_ACCESS_TOKEN,
+    pollingInterval: getEnvNumber('YOUTUBE_POLLING_INTERVAL', 30000),
   } : undefined,
   relay: {
     prefixEnabled: getEnvBool('RELAY_PREFIX_ENABLED', true),

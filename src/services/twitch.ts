@@ -103,29 +103,55 @@ export class TwitchService implements PlatformService {
         logger.debug(`Skipping message from wrong channel: ${channel} (expected #${config.twitch.channel})`);
         return;
       }
-      
-      // Check if this is a relayed message (has platform prefix with or without emoji)
-      // Pattern handles Unicode bold formatting used by the bot
-      // Example: "🔵 [𝗧𝗲𝗹𝗲𝗴𝗿𝗮𝗺] 𝗚𝗿𝗶𝘁𝘇𝗽𝘂𝗽: test"
+
+      // Skip self messages FIRST - before any other processing
+      if (self) {
+        logger.debug('Skipping self message');
+        return;
+      }
+
+      // Skip messages from the bot account (backup check)
+      if (tags.username === config.twitch.username) {
+        logger.debug('Skipping message from bot account');
+        return;
+      }
+
+      // Check if this is a relayed message - ANY message with platform prefix
+      // We need to catch ALL relayed messages, not just parse them
+      const isRelayedMessage = message.includes('[') && message.includes(']') && (
+        message.includes('Telegram') ||
+        message.includes('Discord') ||
+        message.includes('Kick') ||
+        message.includes('𝐓𝐞𝐥𝐞𝐠𝐫𝐚𝐦') ||
+        message.includes('𝐃𝐢𝐬𝐜𝐨𝐫𝐝') ||
+        message.includes('𝐊𝐢𝐜𝐤')
+      );
+
+      logger.info(`TWITCH RELAY CHECK: Testing message: "${message}"`);
+      logger.info(`TWITCH RELAY CHECK: Is relayed message: ${isRelayedMessage ? 'YES - SKIPPING' : 'NO - PROCESSING'}`);
+
+      if (isRelayedMessage) {
+        logger.info(`TWITCH SKIPPING: Detected relayed message, not processing further`);
+        return; // Skip relaying it back
+      }
+
+      // Original pattern for detailed parsing (keeping for reply detection)
       const relayPattern = /^[🟦🔵💙🟢💚🔴❤️]\s*\[([^\]]+)\]\s*([^:]+):\s*(.*)$/;
       const relayMatch = message.match(relayPattern);
-      
-      logger.info(`TWITCH RELAY CHECK: Testing message: "${message}"`);
-      logger.info(`TWITCH RELAY CHECK: Match result: ${relayMatch ? 'YES - SKIPPING' : 'NO - PROCESSING'}`);
-      
+
       if (relayMatch) {
         // Extract platform name (in Unicode bold), author (in Unicode bold), and content
         const boldPlatformStr = relayMatch[1];
         const boldAuthor = relayMatch[2].trim();
         const originalContent = relayMatch[3];
-        
+
         // Convert Unicode bold back to regular text for platform detection
         const platformStr = this.fromUnicodeBold(boldPlatformStr);
         const originalAuthor = this.fromUnicodeBold(boldAuthor);
-        
+
         // logger.info(`RELAY CHECK: Platform=${platformStr}, Author=${originalAuthor}, Content=${originalContent}`);
         const timestamp = new Date();
-        
+
         // Store with the original author's name for reply detection
         const messageId = `${platformStr}-${Date.now()}`;
         // Convert platform string to enum
@@ -140,18 +166,6 @@ export class TwitchService implements PlatformService {
         logger.info(`RELAY TRACKING: Stored message from ${originalAuthor} with content: "${originalContent.substring(0, 30)}..."`);
         logger.info(`RELAY TRACKING: Recent messages now has ${this.recentMessages.size} entries`);
         return; // Skip relaying it back
-      }
-      
-      // Skip self messages (but only after checking for relayed messages)
-      if (self) {
-        logger.debug('Skipping self message');
-        return;
-      }
-      
-      // Skip messages from the bot account (backup check) - but only after checking for relayed messages
-      if (tags.username === config.twitch.username) {
-        logger.debug('Skipping message from bot account');
-        return;
       }
 
       this.status.messagesReceived++;
@@ -335,24 +349,13 @@ export class TwitchService implements PlatformService {
   }
 
   async initialize(): Promise<void> {
-    // Initialize token manager
-    try {
-      await twitchTokenManager.initialize();
-      
-      // Set up callback to update API token when refreshed
-      twitchTokenManager.onTokenRefresh((accessToken: string) => {
-        if (this.api) {
-          this.api.updateToken(accessToken);
-          logger.info('Twitch API token updated after refresh');
-        }
-      });
-      
-      twitchTokenManager.startAutoRefresh();
-      logger.info('Twitch token manager initialized');
-    } catch (error) {
-      logger.error('Failed to initialize Twitch token manager:', error);
-      // Continue with existing token from .env
-    }
+    // Set up callback to update API token when refreshed (token manager initialized in main app)
+    twitchTokenManager.onTokenRefresh((accessToken: string) => {
+      if (this.api) {
+        this.api.updateToken(accessToken);
+        logger.info('Twitch API token updated after refresh');
+      }
+    });
   }
 
   async connect(): Promise<void> {

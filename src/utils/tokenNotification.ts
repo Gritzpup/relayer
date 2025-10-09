@@ -40,7 +40,7 @@ export class TokenNotificationManager {
     }
   }
 
-  private async checkTokenExpiry(tokenDataPath: string): Promise<void> {
+  public async checkTokenExpiry(tokenDataPath: string): Promise<void> {
     try {
       const fs = await import('fs/promises');
       const tokenData = JSON.parse(await fs.readFile(tokenDataPath, 'utf-8'));
@@ -108,11 +108,11 @@ export class TokenNotificationManager {
 
   private async showGUIPopup(title: string, message: string, buttons: string[], type: 'info' | 'warning' | 'error'): Promise<void> {
     try {
-      // Create a zenity dialog for GUI popup
+      // Create a zenity dialog for GUI popup on user's display
       const buttonArgs = buttons.map(btn => `--extra-button="${btn}"`).join(' ');
       const iconMap = { info: 'info', warning: 'warning', error: 'error' };
       
-      const command = `zenity --${iconMap[type]} --title="${title}" --text="${message}" --width=400 --height=200 ${buttonArgs}`;
+      const command = `DISPLAY=:0 zenity --${iconMap[type]} --title="${title}" --text="${message}" --width=400 --height=200 ${buttonArgs}`;
       
       const result = await execAsync(command);
       
@@ -122,8 +122,9 @@ export class TokenNotificationManager {
       
       logger.info(`GUI popup shown: ${title}`);
     } catch (error) {
-      // Try alternative GUI methods if zenity fails
-      await this.fallbackGUIPopup(title, message);
+      // Just open Firefox directly if popup fails
+      logger.warn('Popup failed, opening Firefox directly');
+      await this.launchTokenRenewal();
     }
   }
 
@@ -146,11 +147,38 @@ export class TokenNotificationManager {
 
   private async launchTokenRenewal(): Promise<void> {
     try {
-      // Launch the token renewal script
-      const scriptPath = path.join(__dirname, '../../scripts/renew-twitch-token.js');
-      const command = `gnome-terminal -- node "${scriptPath}"`;
-      await execAsync(command);
-      logger.info('Launched token renewal process');
+      // Use the new integrated token manager approach - just open localhost
+      const localUrl = 'http://localhost:3000';
+      
+      logger.info('🌐 Opening Chrome browser for token renewal...');
+      logger.info('The new token manager will handle the authentication flow');
+      
+      // Just launch the fucking browser normally
+      const chromeCommands = [
+        `DISPLAY=:0 chromium "${localUrl}"`,
+        `DISPLAY=:0 google-chrome "${localUrl}"`,
+        `DISPLAY=:0 chrome "${localUrl}"`
+      ];
+      
+      let chromeOpened = false;
+      for (const cmd of chromeCommands) {
+        try {
+          await execAsync(cmd);
+          chromeOpened = true;
+          logger.info(`Opened Chrome with command: ${cmd}`);
+          break;
+        } catch (err) {
+          // Try next Chrome option
+          continue;
+        }
+      }
+      
+      if (!chromeOpened) {
+        logger.warn('Could not open Chrome automatically');
+        console.log(`\n🌐 Please open Chrome and go to:\n${localUrl}\n`);
+      }
+      
+      logger.info('Launched token renewal process - check localhost:3000');
     } catch (error) {
       logger.error('Failed to launch token renewal:', error);
       // Fallback: just show instructions
@@ -162,9 +190,9 @@ export class TokenNotificationManager {
     const instructions = `
 To renew your Twitch token:
 
-1. Open terminal in the relayer directory
-2. Run: node scripts/renew-twitch-token.js
-3. Follow the instructions to authorize with Twitch
+1. The relayer has an integrated token refresh system
+2. Go to: http://localhost:3000 in your browser
+3. Click "Authorize with Twitch" and log in
 4. The relayer will automatically restart with the new token
 
 The new token will last 30+ days.
@@ -176,5 +204,24 @@ The new token will last 30+ days.
       ['OK'],
       'info'
     );
+  }
+
+  // Show immediate token refresh notification
+  public showTokenRefreshNotification(): void {
+    try {
+      // Show desktop notification
+      this.showGUIPopup(
+        'Twitch Token Refresh Required',
+        'Your Twitch token has expired and needs to be refreshed.\n\nThe relayer service is waiting for you to complete the authentication process.\n\nPress ENTER in the terminal to start the refresh process.',
+        ['OK'],
+        'warning'
+      ).catch(() => {
+        // Fallback to console notification
+        console.log('\n🚨 TWITCH TOKEN REFRESH REQUIRED 🚨');
+        console.log('Desktop notification failed, but the refresh process is waiting for your input in the terminal.');
+      });
+    } catch (error) {
+      logger.warn('Failed to show desktop notification:', error);
+    }
   }
 }

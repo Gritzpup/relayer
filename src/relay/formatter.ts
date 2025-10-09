@@ -55,7 +55,7 @@ export class MessageFormatter {
         case Platform.Discord:
           return '🔵'; // Blue circle for Discord
         case Platform.Twitch:
-          return '🔴'; // Red circle for Twitch
+          return '🟣'; // Purple circle for Twitch
         case Platform.Kick:
           return '🟢'; // Green circle for Kick
         case Platform.YouTube:

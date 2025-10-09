@@ -78,11 +78,10 @@ export class KickService implements PlatformService {
     logger.info('Connecting to Kick...');
 
     try {
-      // Initialize token manager for API authentication if we have OAuth tokens
-      if (!config.kick?.token) {
-        await kickTokenManager.initialize();
-      }
-      
+      // Always initialize token manager to load latest token from file
+      // This ensures we get refreshed tokens even if .env is cached
+      await kickTokenManager.initialize();
+
       await this.connectInternal();
     } catch (error) {
       this.isConnecting = false;

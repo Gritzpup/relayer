@@ -33,6 +33,8 @@ interface LiveChatMessage {
 export class YouTubeAPI {
   private baseURL = 'https://www.googleapis.com/youtube/v3';
   private accessToken?: string;
+  private quotaExceeded: boolean = false;
+  private quotaExceededUntil?: Date;
 
   constructor(accessToken?: string) {
     this.accessToken = accessToken;
@@ -109,6 +111,12 @@ export class YouTubeAPI {
    * Send a message to YouTube live chat
    */
   async sendChatMessage(liveChatId: string, message: string): Promise<string | undefined> {
+    // Check if quota is exceeded
+    if (this.quotaExceeded && this.quotaExceededUntil && new Date() < this.quotaExceededUntil) {
+      logger.warn('[YOUTUBE API] Quota exceeded, skipping message send until quota resets');
+      return undefined;
+    }
+
     try {
       let accessToken = this.accessToken;
       if (!accessToken) {
@@ -141,6 +149,9 @@ export class YouTubeAPI {
       );
 
       logger.info(`[YOUTUBE API] Message sent successfully: "${message}"`);
+      // Reset quota exceeded flag on successful send
+      this.quotaExceeded = false;
+      this.quotaExceededUntil = undefined;
       return response.data?.id;
     } catch (error) {
       logger.error('Failed to send YouTube message:', error);
@@ -148,6 +159,16 @@ export class YouTubeAPI {
         logger.error(`YouTube API error: ${error.response?.status} - ${JSON.stringify(error.response?.data)}`);
         if (error.response?.status === 401) {
           logger.warn('YouTube token may be expired, attempting refresh...');
+        } else if (error.response?.status === 403 &&
+                   error.response?.data?.error?.errors?.[0]?.reason === 'quotaExceeded') {
+          // Set quota exceeded flag - YouTube quotas reset at midnight Pacific Time
+          this.quotaExceeded = true;
+          const now = new Date();
+          const midnightPT = new Date(now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
+          midnightPT.setHours(24, 0, 0, 0);
+          this.quotaExceededUntil = midnightPT;
+          logger.warn(`[YOUTUBE API] ⚠️  YouTube API quota exceeded! Message sending disabled until ${midnightPT.toISOString()}`);
+          logger.warn(`[YOUTUBE API] YouTube will still receive messages from other platforms, but won't send to YouTube until quota resets.`);
         }
       }
       return undefined;
@@ -162,6 +183,15 @@ export class YouTubeAPI {
     nextPageToken?: string;
     pollingIntervalMillis?: number;
   }> {
+    // Check if quota is exceeded
+    if (this.quotaExceeded && this.quotaExceededUntil && new Date() < this.quotaExceededUntil) {
+      // Return empty messages but with a longer interval to reduce log spam
+      return {
+        messages: [],
+        pollingIntervalMillis: 60000 // Poll every 60 seconds when quota exceeded
+      };
+    }
+
     try {
       let accessToken = this.accessToken;
       if (!accessToken) {
@@ -187,16 +217,37 @@ export class YouTubeAPI {
         timeout: 10000
       });
 
+      // Reset quota exceeded flag on successful poll
+      if (this.quotaExceeded) {
+        this.quotaExceeded = false;
+        this.quotaExceededUntil = undefined;
+        logger.info('[YOUTUBE API] ✅ YouTube API quota restored! Resuming normal operation.');
+      }
+
       return {
         messages: response.data.items || [],
         nextPageToken: response.data.nextPageToken,
         pollingIntervalMillis: response.data.pollingIntervalMillis || 5000
       };
     } catch (error) {
-      logger.error('Failed to list YouTube chat messages:', error);
+      if (axios.isAxiosError(error) && error.response?.status === 403 &&
+          error.response?.data?.error?.errors?.[0]?.reason === 'quotaExceeded') {
+        // Set quota exceeded flag
+        if (!this.quotaExceeded) {
+          this.quotaExceeded = true;
+          const now = new Date();
+          const midnightPT = new Date(now.toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }));
+          midnightPT.setHours(24, 0, 0, 0);
+          this.quotaExceededUntil = midnightPT;
+          logger.warn(`[YOUTUBE API] ⚠️  YouTube API quota exceeded! Both sending and receiving disabled until ${midnightPT.toISOString()}`);
+          logger.warn(`[YOUTUBE API] YouTube integration will automatically resume when quota resets.`);
+        }
+      } else {
+        logger.error('Failed to list YouTube chat messages:', error);
+      }
       return {
         messages: [],
-        pollingIntervalMillis: 5000
+        pollingIntervalMillis: 60000 // Use longer interval on error
       };
     }
   }

@@ -13,11 +13,8 @@ export class KickAPI {
    */
   async sendChatMessage(channelId: string, message: string): Promise<string | undefined> {
     try {
-      // Use token from config if available, otherwise try token manager
-      let accessToken = config.kick?.token;
-      if (!accessToken) {
-        accessToken = await kickTokenManager.getAccessToken();
-      }
+      // Always use token manager to get the latest token (handles refresh automatically)
+      let accessToken = await kickTokenManager.getAccessToken();
 
       // Use the official Kick API endpoint
       // broadcaster_user_id is the numeric user ID (77854856 for Gritzpup)
@@ -98,10 +95,7 @@ export class KickAPI {
    */
   async getUserInfo(): Promise<any> {
     try {
-      let accessToken = config.kick?.token;
-      if (!accessToken) {
-        accessToken = await kickTokenManager.getAccessToken();
-      }
+      let accessToken = await kickTokenManager.getAccessToken();
 
       // Try multiple possible endpoints
       const endpoints = [
@@ -160,10 +154,7 @@ export class KickAPI {
    */
   async subscribeToEvents(webhookUrl: string, broadcasterUserId: string | number, events: Array<{name: string, version: number}>): Promise<any> {
     try {
-      let accessToken = config.kick?.token;
-      if (!accessToken) {
-        accessToken = await kickTokenManager.getAccessToken();
-      }
+      let accessToken = await kickTokenManager.getAccessToken();
 
       // broadcaster_user_id seems to be determined from the access token
       // Omit it from the request body - including it causes "Invalid request" errors
@@ -204,10 +195,7 @@ export class KickAPI {
    */
   async getEventSubscriptions(): Promise<any> {
     try {
-      let accessToken = config.kick?.token;
-      if (!accessToken) {
-        accessToken = await kickTokenManager.getAccessToken();
-      }
+      let accessToken = await kickTokenManager.getAccessToken();
 
       const response = await axios.get(
         `${this.baseURL}/public/v1/events/subscriptions`,
@@ -236,10 +224,7 @@ export class KickAPI {
    */
   async unsubscribeFromEvent(subscriptionIds: string[]): Promise<boolean> {
     try {
-      let accessToken = config.kick?.token;
-      if (!accessToken) {
-        accessToken = await kickTokenManager.getAccessToken();
-      }
+      let accessToken = await kickTokenManager.getAccessToken();
 
       await axios.delete(
         `${this.baseURL}/public/v1/events/subscriptions`,

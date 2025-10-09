@@ -76,6 +76,12 @@ export class YouTubeTokenManager {
   private async refreshToken(refreshToken?: string): Promise<void> {
     try {
       const tokenToUse = refreshToken || this.tokenData?.refresh_token;
+      logger.debug('YouTube refreshToken called with:', {
+        hasRefreshTokenParam: !!refreshToken,
+        hasTokenData: !!this.tokenData,
+        hasTokenDataRefreshToken: !!this.tokenData?.refresh_token,
+        tokenToUse: tokenToUse ? 'present' : 'missing'
+      });
       if (!tokenToUse) {
         throw new Error('No YouTube refresh token available');
       }
@@ -118,8 +124,13 @@ export class YouTubeTokenManager {
       }
 
       logger.info(`YouTube token refreshed successfully, expires in ${expires_in} seconds`);
-    } catch (error) {
-      logger.error('Failed to refresh YouTube token:', error);
+    } catch (error: any) {
+      logger.error('Failed to refresh YouTube token:', {
+        message: error.message,
+        response: error.response?.data,
+        status: error.response?.status,
+        error: error
+      });
       throw error;
     }
   }

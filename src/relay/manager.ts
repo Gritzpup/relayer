@@ -2,6 +2,8 @@ import { Platform, PlatformService, RelayMessage } from '../types';
 import { DiscordService } from '../services/discord';
 import { TelegramService } from '../services/telegram';
 import { TwitchService } from '../services/twitch';
+import { KickService } from '../services/kick';
+import { YouTubeService } from '../services/youtube';
 import { MessageFormatter } from './formatter';
 import { MessageMapper } from './messageMapper';
 import { RateLimiter } from './rateLimit';
@@ -27,6 +29,16 @@ export class RelayManager {
     this.services.set(Platform.Discord, new DiscordService());
     this.services.set(Platform.Telegram, new TelegramService());
     this.services.set(Platform.Twitch, new TwitchService());
+
+    // Only add Kick service if configured
+    if (config.kick) {
+      this.services.set(Platform.Kick, new KickService());
+    }
+
+    // Only add YouTube service if configured
+    if (config.youtube) {
+      this.services.set(Platform.YouTube, new YouTubeService());
+    }
   }
 
   async start(): Promise<void> {
@@ -489,14 +501,14 @@ export class RelayManager {
     // Determine target channel based on channel mapping
     let targetChannelId: string | undefined;
     
-    // Twitch doesn't have multiple channels, so skip channel mapping for it
-    if (targetPlatform === Platform.Twitch) {
-      // Only relay general channel messages to Twitch
+    // Twitch and Kick don't have multiple channels, so skip channel mapping for them
+    if (targetPlatform === Platform.Twitch || targetPlatform === Platform.Kick) {
+      // Only relay general channel messages to Twitch/Kick
       if (!message.channelName || message.channelName !== 'general') {
-        // logger.info(`Skipping ${message.channelName || 'unmapped channel'} message to Twitch - only general channel is relayed`);
+        // logger.info(`Skipping ${message.channelName || 'unmapped channel'} message to ${targetPlatform} - only general channel is relayed`);
         return;
       }
-      // // logger.info(`Routing message from ${message.platform} #general → Twitch`);
+      // // logger.info(`Routing message from ${message.platform} #general → ${targetPlatform}`);
     } else if (message.channelName && channelMappings[message.channelName]) {
       const mapping = channelMappings[message.channelName];
       if (targetPlatform === Platform.Discord) {
@@ -520,8 +532,8 @@ export class RelayManager {
       // Commented out verbose logging
       // logger.info(`Routing message from ${message.platform} #${message.channelName} → ${targetPlatform}`);
     } else {
-      // No channel mapping and not Twitch, skip
-      if (targetPlatform.toString() !== Platform.Twitch.toString()) {
+      // No channel mapping and not Twitch/Kick, skip
+      if (targetPlatform.toString() !== Platform.Twitch.toString() && targetPlatform.toString() !== Platform.Kick.toString()) {
         logger.warn(`No channel info for message to ${targetPlatform}, skipping`);
         return;
       }

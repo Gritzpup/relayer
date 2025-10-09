@@ -419,6 +419,41 @@ export class DiscordService implements PlatformService {
       });
     }
 
+    // Handle Discord stickers
+    if (message.stickers && message.stickers.size > 0) {
+      message.stickers.forEach(sticker => {
+        // Discord sticker format types: PNG=1, APNG=2, Lottie=3, GIF=4
+        const isAnimated = sticker.format === 2 || sticker.format === 4; // APNG or GIF
+        const isLottie = sticker.format === 3; // Lottie animations (JSON)
+        
+        logger.info(`Discord sticker found: ${sticker.name} (ID: ${sticker.id}, format: ${sticker.format}, animated: ${isAnimated}, lottie: ${isLottie})`);
+        
+        if (isLottie) {
+          // For Lottie stickers, add them as a special attachment type for text formatting
+          logger.info(`Adding Lottie sticker ${sticker.name} as text-only sticker`);
+          attachments.push({
+            type: 'sticker' as any,
+            url: sticker.url,
+            filename: `${sticker.name}.json`,
+            mimeType: 'application/json',
+            data: Buffer.from(sticker.name), // Store sticker name for text formatting
+          });
+        } else {
+          // For image-based stickers (PNG, APNG, GIF)
+          const extension = sticker.format === 4 ? 'gif' : 
+                           sticker.format === 2 ? 'png' : 'png';
+          const mimeType = sticker.format === 4 ? 'image/gif' : 'image/png';
+          
+          attachments.push({
+            type: isAnimated ? 'gif' : 'sticker',
+            url: sticker.url,
+            filename: `${sticker.name}.${extension}`,
+            mimeType: mimeType,
+          });
+        }
+      });
+    }
+
     // Check if this is a reply
     let replyTo: RelayMessage['replyTo'] | undefined;
     if (message.reference && message.reference.messageId) {

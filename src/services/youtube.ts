@@ -47,10 +47,9 @@ export class YouTubeService implements PlatformService {
 
     try {
       // Initialize token manager for API authentication
-      if (!config.youtube?.accessToken) {
-        await youtubeTokenManager.initialize();
-        youtubeTokenManager.startAutoRefresh();
-      }
+      // Always initialize to ensure tokens are fresh and can be refreshed
+      await youtubeTokenManager.initialize();
+      youtubeTokenManager.startAutoRefresh();
 
       await this.connectInternal();
     } catch (error) {
@@ -140,9 +139,10 @@ export class YouTubeService implements PlatformService {
       }
     };
 
-    // Start polling every 5 seconds initially
-    this.pollingInterval = setInterval(poll, 5000);
-    logger.info('Started polling YouTube live chat messages');
+    // Start polling with configured interval (default 30 seconds)
+    const pollingIntervalMs = config.youtube?.pollingInterval || 30000;
+    this.pollingInterval = setInterval(poll, pollingIntervalMs);
+    logger.info(`Started polling YouTube live chat messages every ${pollingIntervalMs/1000} seconds`);
   }
 
   private async handleMessage(messageData: any): Promise<void> {
@@ -151,29 +151,18 @@ export class YouTubeService implements PlatformService {
                          messageData.snippet?.displayMessage || '';
       const author = messageData.authorDetails?.displayName || 'Unknown';
 
-      // Skip bot's own messages (check if author is the channel owner)
-      if (messageData.authorDetails?.isChatOwner && config.youtube?.channelId) {
-        logger.debug('Skipping message from bot account');
-        return;
-      }
-
-      // Check if this is a relayed message - ANY message with platform prefix
+      // Check if this is a relayed message - messages that START with platform prefix
       // This prevents the bot from seeing its own relayed messages and echoing them back
-      const isRelayedMessage = messageText.includes('[') && messageText.includes(']') && (
-        messageText.includes('Telegram') ||
-        messageText.includes('Discord') ||
-        messageText.includes('Twitch') ||
-        messageText.includes('Kick') ||
-        messageText.includes('𝐓𝐞𝐥𝐞𝐠𝐫𝐚𝐦') ||
-        messageText.includes('𝐃𝐢𝐬𝐜𝐨𝐫𝐝') ||
-        messageText.includes('𝐓𝐰𝐢𝐭𝐜𝐡') ||
-        messageText.includes('𝐊𝐢𝐜𝐤')
-      );
+      const isRelayedMessage = /^\[?(Telegram|Discord|Twitch|Kick|YouTube|𝐓𝐞𝐥𝐞𝐠𝐫𝐚𝐦|𝐃𝐢𝐬𝐜𝐨𝐫𝐝|𝐓𝐰𝐢𝐭𝐜𝐡|𝐊𝐢𝐜𝐤|𝐘𝐨𝐮𝐓𝐮𝐛𝐞)\]/.test(messageText) ||
+        /^(🔵|🟣|🔴|🟢|✈️|🎮|💬)/.test(messageText);
 
       if (isRelayedMessage) {
         logger.debug(`YouTube: Skipping relayed message: "${messageText.substring(0, 50)}..."`);
         return;
       }
+
+      // Note: We don't filter messages from channel owner here because the relayed message check above
+      // already handles filtering the bot's own relayed messages (which have platform tags)
 
       this.status.messagesReceived++;
       logPlatformMessage('YouTube', 'in', messageText, author);
