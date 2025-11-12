@@ -223,7 +223,15 @@ export class DiscordService implements PlatformService {
   }
 
   async connect(): Promise<void> {
-    await this.reconnectManager.connect();
+    try {
+      await this.reconnectManager.connect();
+    } catch (error) {
+      this.status.connected = false;
+      this.status.lastError = error instanceof Error ? error.message : 'Unknown error';
+      logger.error('Failed to connect to Discord - relayer will continue without Discord', error);
+      logger.warn('Discord authentication/connection failed - relayer will continue without Discord integration');
+      // Don't throw - just continue without Discord
+    }
   }
 
   async disconnect(): Promise<void> {

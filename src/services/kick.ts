@@ -85,10 +85,11 @@ export class KickService implements PlatformService {
       await this.connectInternal();
     } catch (error) {
       this.isConnecting = false;
+      this.status.connected = false;
       this.status.lastError = error instanceof Error ? error.message : 'Unknown error';
-      logError(error as Error, 'Failed to connect to Kick');
-      this.reconnectManager.scheduleReconnect();
-      throw error;
+      logger.error('Failed to connect to Kick - relayer will continue without Kick', error);
+      logger.warn('Kick authentication/connection failed - relayer will continue without Kick integration');
+      // Don't throw - just continue without Kick
     }
   }
 

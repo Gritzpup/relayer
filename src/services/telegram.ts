@@ -666,11 +666,22 @@ export class TelegramService implements PlatformService {
     // Don't try to connect if conflict detected
     if (this.conflictDetected) {
       logger.error('Cannot connect: Another bot instance is using the same token.');
-      logger.error('Please stop the other instance before trying to connect.');
-      throw new Error('Bot conflict - another instance is running');
+      logger.warn('Telegram bot conflict - relayer will continue without Telegram integration');
+      // Don't throw - just continue without Telegram
+      return;
     }
-    
-    await this.reconnectManager.connect();
+
+    try {
+      await this.reconnectManager.connect();
+    } catch (error) {
+      this.isConnected = false;
+      this.status.connected = false;
+      this.pollingActive = false;
+      this.status.lastError = error instanceof Error ? error.message : 'Unknown error';
+      logger.error('Failed to connect to Telegram - relayer will continue without Telegram', error);
+      logger.warn('Telegram authentication/connection failed - relayer will continue without Telegram integration');
+      // Don't throw - just continue without Telegram
+    }
   }
 
   async disconnect(): Promise<void> {

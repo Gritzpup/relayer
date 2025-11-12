@@ -141,6 +141,10 @@ export const channelMappings: ChannelMappings = {
   'food': {
     discord: '1423296609667649618',
     telegram: '23039'
+  },
+  'politics': {
+    discord: '1438049902985740308',
+    telegram: '29421'
   }
 };
 

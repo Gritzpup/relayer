@@ -359,7 +359,16 @@ export class TwitchService implements PlatformService {
   }
 
   async connect(): Promise<void> {
-    await this.reconnectManager.connect();
+    try {
+      await this.reconnectManager.connect();
+    } catch (error) {
+      this.isConnecting = false;
+      this.status.connected = false;
+      this.status.lastError = error instanceof Error ? error.message : 'Unknown error';
+      logger.error('Failed to connect to Twitch - relayer will continue without Twitch', error);
+      logger.warn('Twitch authentication/connection failed - relayer will continue without Twitch integration');
+      // Don't throw - just continue without Twitch
+    }
   }
 
   async disconnect(): Promise<void> {
