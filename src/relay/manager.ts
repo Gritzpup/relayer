@@ -4,6 +4,7 @@ import { TelegramService } from '../services/telegram';
 import { TwitchService } from '../services/twitch';
 import { KickService } from '../services/kick';
 import { YouTubeService } from '../services/youtube';
+import { RumbleService } from '../services/rumble';
 import { MessageFormatter } from './formatter';
 import { MessageMapper } from './messageMapper';
 import { RateLimiter } from './rateLimit';
@@ -39,6 +40,11 @@ export class RelayManager {
     // Only add YouTube service if configured
     if (config.youtube) {
       this.services.set(Platform.YouTube, new YouTubeService());
+    }
+
+    // Only add Rumble service if configured
+    if (config.rumble) {
+      this.services.set(Platform.Rumble, new RumbleService());
     }
   }
 

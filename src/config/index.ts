@@ -36,6 +36,10 @@ export interface Config {
     accessToken?: string;
     pollingInterval?: number;
   };
+  rumble?: {
+    apiKey: string;
+    pollingInterval?: number;
+  };
   relay: {
     prefixEnabled: boolean;
     attachmentsEnabled: boolean;
@@ -47,6 +51,7 @@ export interface Config {
       twitch?: string;
       kick?: string;
       youtube?: string;
+      rumble?: string;
     };
   };
   logging: {
@@ -88,8 +93,9 @@ function getCustomEmojis(): Config['relay']['customEmojis'] | undefined {
   const twitchEmoji = process.env.CUSTOM_EMOJI_TWITCH;
   const kickEmoji = process.env.CUSTOM_EMOJI_KICK;
   const youtubeEmoji = process.env.CUSTOM_EMOJI_YOUTUBE;
+  const rumbleEmoji = process.env.CUSTOM_EMOJI_RUMBLE;
 
-  if (!discordEmoji && !telegramEmoji && !twitchEmoji && !kickEmoji && !youtubeEmoji) {
+  if (!discordEmoji && !telegramEmoji && !twitchEmoji && !kickEmoji && !youtubeEmoji && !rumbleEmoji) {
     return undefined;
   }
 
@@ -99,6 +105,7 @@ function getCustomEmojis(): Config['relay']['customEmojis'] | undefined {
     twitch: twitchEmoji,
     kick: kickEmoji,
     youtube: youtubeEmoji,
+    rumble: rumbleEmoji,
   };
 }
 
@@ -180,6 +187,10 @@ export const config: Config = {
     refreshToken: process.env.YOUTUBE_REFRESH_TOKEN,
     accessToken: process.env.YOUTUBE_ACCESS_TOKEN,
     pollingInterval: getEnvNumber('YOUTUBE_POLLING_INTERVAL', 30000),
+  } : undefined,
+  rumble: process.env.RUMBLE_API_KEY ? {
+    apiKey: getEnvVar('RUMBLE_API_KEY'),
+    pollingInterval: getEnvNumber('RUMBLE_POLLING_INTERVAL', 5000),
   } : undefined,
   relay: {
     prefixEnabled: getEnvBool('RELAY_PREFIX_ENABLED', true),

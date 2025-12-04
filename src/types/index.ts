@@ -4,6 +4,7 @@ export enum Platform {
   Twitch = 'Twitch',
   Kick = 'Kick',
   YouTube = 'YouTube',
+  Rumble = 'Rumble',
 }
 
 export interface RelayMessage {

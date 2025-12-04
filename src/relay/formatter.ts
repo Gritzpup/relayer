@@ -46,9 +46,14 @@ export class MessageFormatter {
             return config.relay.customEmojis.twitch;
           }
           break;
+        case Platform.Rumble:
+          if (config.relay.customEmojis.rumble) {
+            return config.relay.customEmojis.rumble;
+          }
+          break;
       }
     }
-    
+
     // For Telegram target, use colored emoji indicators
     if (targetPlatform === Platform.Telegram) {
       switch (platform) {
@@ -60,13 +65,15 @@ export class MessageFormatter {
           return '🟢'; // Green circle for Kick
         case Platform.YouTube:
           return '🔴'; // Red circle for YouTube
+        case Platform.Rumble:
+          return '🎬'; // Movie camera for Rumble
         case Platform.Telegram:
           return '✈️'; // Keep paper plane for Telegram (shouldn't happen in relay)
         default:
           return '💬'; // Default chat bubble
       }
     }
-    
+
     // For Discord target, use colored circles for other platforms
     if (targetPlatform === Platform.Discord) {
       switch (platform) {
@@ -80,11 +87,13 @@ export class MessageFormatter {
           return '🟢'; // Green circle for Kick
         case Platform.YouTube:
           return '🔴'; // Red circle for YouTube
+        case Platform.Rumble:
+          return '🎬'; // Movie camera for Rumble
         default:
           return '💬'; // Default chat bubble
       }
     }
-    
+
     // For Twitch target, use colored circles
     if (targetPlatform === Platform.Twitch) {
       switch (platform) {
@@ -96,13 +105,15 @@ export class MessageFormatter {
           return '🟢'; // Green circle for Kick
         case Platform.YouTube:
           return '🔴'; // Red circle for YouTube
+        case Platform.Rumble:
+          return '🎬'; // Movie camera for Rumble
         case Platform.Twitch:
           return '🎮'; // Gaming controller for Twitch (shouldn't happen in relay)
         default:
           return '💬'; // Default chat bubble
       }
     }
-    
+
     // Fallback to colored circles for consistency
     switch (platform) {
       case Platform.Discord:
@@ -115,6 +126,8 @@ export class MessageFormatter {
         return '🟢'; // Green circle for Kick
       case Platform.YouTube:
         return '🔴'; // Red circle for YouTube
+      case Platform.Rumble:
+        return '🎬'; // Movie camera for Rumble
       default:
         return '💬'; // Default chat bubble
     }
