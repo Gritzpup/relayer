@@ -2,6 +2,7 @@ import { config } from '../config';
 import { Platform, RelayMessage, MessageHandler, DeleteHandler, PlatformService, ServiceStatus, Attachment } from '../types';
 import { logger, logPlatformMessage, logError } from '../utils/logger';
 import { ReconnectManager } from '../utils/reconnect';
+import { rumbleCookieManager } from './rumbleCookieManager';
 import axios from 'axios';
 
 interface RumbleChatMessage {
@@ -71,6 +72,9 @@ export class RumbleService implements PlatformService {
     logger.info('Connecting to Rumble...');
 
     try {
+      // Initialize cookie manager for authentication (for sending messages)
+      await rumbleCookieManager.initialize();
+
       await this.connectInternal();
     } catch (error) {
       this.isConnecting = false;
@@ -249,9 +253,92 @@ export class RumbleService implements PlatformService {
     originalMessage?: RelayMessage
   ): Promise<string | undefined> {
 
-    // Rumble API v1.1 does not support sending messages (read-only)
-    logger.debug('Rumble API does not support sending messages (read-only API)');
-    return undefined;
+    if (!this.status.connected) {
+      logger.warn('Cannot send Rumble message: Not connected');
+      return undefined;
+    }
+
+    try {
+      // Get chat ID from cookie manager
+      let chatId = await rumbleCookieManager.getChatId();
+
+      // If we don't have a chat ID yet, try to get it from the API
+      if (!chatId) {
+        const response = await axios.get<RumbleApiResponse>(this.apiUrl, {
+          timeout: 10000
+        });
+
+        const liveStream = response.data.livestreams?.find(stream => stream.is_live);
+        if (liveStream?.id) {
+          chatId = liveStream.id;
+          await rumbleCookieManager.setChatId(chatId);
+        } else {
+          logger.warn('No active Rumble stream found - cannot send message');
+          return undefined;
+        }
+      }
+
+      // Get authentication cookies
+      const cookies = await rumbleCookieManager.getCookies();
+
+      // Prepare message content
+      let messageContent = content;
+
+      // Add attachment URLs if present
+      if (attachments && attachments.length > 0) {
+        const attachmentUrls = attachments
+          .filter(att => att.url)
+          .map(att => att.url)
+          .join(' ');
+
+        if (attachmentUrls) {
+          messageContent = `${messageContent} ${attachmentUrls}`;
+        }
+      }
+
+      // Send message to Rumble chat API
+      const chatEndpoint = `https://web7.rumble.com/chat/api/chat/${chatId}/stream`;
+
+      const payload = {
+        type: 'messages',
+        messages: [
+          {
+            text: messageContent
+          }
+        ]
+      };
+
+      const response = await axios.post(chatEndpoint, payload, {
+        headers: {
+          'Cookie': cookies,
+          'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        timeout: 10000
+      });
+
+      if (response.status === 200) {
+        this.status.messagesSent++;
+        logPlatformMessage('Rumble', 'out', messageContent, 'bot');
+        logger.info('[RUMBLE] Message sent successfully');
+        return `rumble-${Date.now()}`; // Return a synthetic message ID
+      }
+
+      logger.warn('[RUMBLE] Unexpected response from chat API:', response.status);
+      return undefined;
+
+    } catch (error: any) {
+      if (error.response?.status === 401 || error.response?.status === 403) {
+        logger.error('[RUMBLE] Authentication failed - cookies may be expired');
+        logger.error('[RUMBLE] Please re-authenticate by restarting the relayer');
+      } else if (error.response?.status === 500) {
+        logger.error('[RUMBLE] Server error - chat API may not be available');
+      } else {
+        logError(error as Error, 'Failed to send message to Rumble');
+      }
+      return undefined;
+    }
   }
 
   async editMessage(messageId: string, newContent: string): Promise<boolean> {
