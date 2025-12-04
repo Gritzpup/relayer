@@ -308,12 +308,17 @@ export class RumbleService implements PlatformService {
         ]
       };
 
+      logger.debug(`[RUMBLE] Sending to endpoint: ${chatEndpoint}`);
+      logger.debug(`[RUMBLE] Payload: ${JSON.stringify(payload)}`);
+
       const response = await axios.post(chatEndpoint, payload, {
         headers: {
           'Cookie': cookies,
           'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
           'Content-Type': 'application/json',
-          'Accept': 'application/json'
+          'Accept': 'application/json',
+          'Origin': 'https://rumble.com',
+          'Referer': `https://rumble.com/user/Gritzpup/live`
         },
         timeout: 10000
       });
@@ -332,6 +337,10 @@ export class RumbleService implements PlatformService {
       if (error.response?.status === 401 || error.response?.status === 403) {
         logger.error('[RUMBLE] Authentication failed - cookies may be expired');
         logger.error('[RUMBLE] Please re-authenticate by restarting the relayer');
+      } else if (error.response?.status === 400) {
+        logger.error('[RUMBLE] Bad Request (400) - API endpoint or payload format may be incorrect');
+        logger.error(`[RUMBLE] Endpoint: ${chatEndpoint}`);
+        logger.error(`[RUMBLE] Response: ${JSON.stringify(error.response?.data)}`);
       } else if (error.response?.status === 500) {
         logger.error('[RUMBLE] Server error - chat API may not be available');
       } else {
