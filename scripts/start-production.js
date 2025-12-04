@@ -81,13 +81,32 @@ async function isPortAvailable(port) {
 
 function killExistingProcesses() {
   log('🔄 Checking for existing processes...', colors.yellow);
-  
+
+  // Kill by patterns first (more aggressive)
   try {
-    // Kill any existing Node processes running the relay
-    const psOutput = execSync("ps aux | grep -E 'tsx.*src/index\\.ts|node.*relay|deletion_detector/bot\\.py' | grep -v grep | awk '{print $2}'", {
+    log('  Killing tsx processes...', colors.cyan);
+    execSync("pkill -9 -f 'tsx.*src/index' 2>/dev/null || true");
+  } catch (e) { /* ignore */ }
+
+  try {
+    log('  Killing node relay processes...', colors.cyan);
+    execSync("pkill -9 -f 'node.*relay' 2>/dev/null || true");
+  } catch (e) { /* ignore */ }
+
+  try {
+    log('  Killing deletion detector...', colors.cyan);
+    execSync("pkill -9 -f 'deletion_detector.*bot' 2>/dev/null || true");
+  } catch (e) { /* ignore */ }
+
+  // Wait for processes to die
+  execSync('sleep 1');
+
+  // Now check for any remaining processes
+  try {
+    const psOutput = execSync("ps aux | grep -E 'tsx.*src/index|node.*relay|deletion_detector.*bot' | grep -v grep | awk '{print $2}'", {
       encoding: 'utf8'
     }).trim();
-    
+
     if (psOutput) {
       const pids = psOutput.split('\n').filter(pid => pid && pid !== process.pid.toString());
       if (pids.length > 0) {
@@ -95,28 +114,36 @@ function killExistingProcesses() {
         pids.forEach(pid => {
           try {
             process.kill(parseInt(pid), 'SIGTERM');
+            log(`  Sent SIGTERM to PID ${pid}`, colors.cyan);
           } catch (e) {
             // Process might have already exited
           }
         });
-        
+
         // Give processes time to terminate gracefully
-        execSync('sleep 2');
-        
+        execSync('sleep 3');
+
         // Force kill any remaining processes
         pids.forEach(pid => {
           try {
+            process.kill(parseInt(pid), 0); // Check if still running
             process.kill(parseInt(pid), 'SIGKILL');
+            log(`  Force killed PID ${pid}`, colors.red);
           } catch (e) {
-            // Process might have already exited
+            // Process already exited - good!
           }
         });
-        
+
         log('✅ Existing processes terminated', colors.green);
+      } else {
+        log('✅ No existing processes found', colors.green);
       }
+    } else {
+      log('✅ No existing processes found', colors.green);
     }
   } catch (error) {
     // No processes found or error in ps command - that's fine
+    log('✅ No existing processes found', colors.green);
   }
   
   // Clean up any locked database files

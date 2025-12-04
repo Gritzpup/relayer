@@ -563,7 +563,14 @@ export class TwitchService implements PlatformService {
   }
 
   getStatus(): ServiceStatus {
-    return { ...this.status };
+    // Check actual WebSocket connection state instead of relying solely on status object
+    // This ensures we accurately reflect disconnections that happen silently
+    const actualConnected = this.client.readyState() === 'OPEN';
+
+    return {
+      ...this.status,
+      connected: actualConnected
+    };
   }
 
   private convertMessage(tags: tmi.ChatUserstate, message: string): RelayMessage {

@@ -1,7 +1,7 @@
 {
-  "access_token": "92gh14phtxsx88qhzfoj0o56kr5e7a",
+  "access_token": "k3zazntgsnd6e6q3m4jgdadcaotlcs",
   "refresh_token": "22sur89fvfbpqlb6abk5h7ytbh1zao848zw96zkzhhbflobnen",
-  "expires_at": 1764871543785,
+  "expires_at": 1757713196015,
   "scope": [
     "chat:edit",
     "chat:read",

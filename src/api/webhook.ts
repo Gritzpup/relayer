@@ -136,9 +136,15 @@ router.post('/kick-webhook', async (req, res): Promise<void> => {
       // Kick webhook sends the event data directly in the body, not nested in event_data
       const eventData = req.body;
 
-      // Skip bot's own messages (check if KICK_USERNAME is defined)
-      if (process.env.KICK_USERNAME && eventData?.sender?.username === process.env.KICK_USERNAME) {
-        logger.debug('Kick webhook: Skipping message from bot account');
+      // Skip bot's own messages (check if KICK_USERNAME is defined or if it's @Relayer)
+      const senderUsername = eventData?.sender?.username || '';
+      const isOwnMessage = (process.env.KICK_USERNAME && senderUsername === process.env.KICK_USERNAME) ||
+                          senderUsername === '@Relayer' ||
+                          senderUsername.toLowerCase() === 'relayer' ||
+                          senderUsername.toLowerCase() === '@relayer';
+
+      if (isOwnMessage) {
+        logger.debug(`Kick webhook: Skipping message from bot account (${senderUsername})`);
         res.status(200).json({ success: true, message: 'Ignored own message' });
         return;
       }

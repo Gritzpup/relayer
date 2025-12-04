@@ -17,7 +17,7 @@ async def get_topic_ids():
     # Use the existing deletion detector session
     app = Client(
         "deletion_detector",
-        workdir="../deletion_detector"
+        workdir="../deletion_detector/sessions"
     )
     
     async with app:

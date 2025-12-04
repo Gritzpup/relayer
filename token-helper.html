@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Twitch Token Helper</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 50px; }
+        .step { margin: 20px 0; padding: 15px; background: #f5f5f5; border-radius: 5px; }
+        .token-input { width: 80%; padding: 10px; margin: 10px 0; }
+        button { background: #9146FF; color: white; padding: 12px 24px; border: none; border-radius: 5px; cursor: pointer; }
+        button:hover { background: #7c3fe3; }
+        .result { margin: 20px 0; padding: 15px; background: #e8f5e8; border-radius: 5px; display: none; }
+    </style>
+</head>
+<body>
+    <h1>🎮 Twitch Token Helper (VPN-Friendly)</h1>
+    
+    <div class="step">
+        <h3>Step 1: Get New Token</h3>
+        <p>Click this button to open Twitch authorization:</p>
+        <button onclick="openTwitchAuth()">Authorize with Twitch</button>
+    </div>
+    
+    <div class="step">
+        <h3>Step 2: Copy Token from URL</h3>
+        <p>After authorizing, copy the <strong>entire URL</strong> from your browser and paste it here:</p>
+        <input type="text" id="redirectUrl" class="token-input" placeholder="Paste the redirect URL here (starts with http://localhost/#access_token=...)">
+        <br>
+        <button onclick="processToken()">Process Token</button>
+    </div>
+    
+    <div id="result" class="result">
+        <h3>✅ Token Extracted!</h3>
+        <p>Copy and run this command in your terminal:</p>
+        <pre id="command"></pre>
+    </div>
+
+    <script>
+        function openTwitchAuth() {
+            const authUrl = 'https://id.twitch.tv/oauth2/authorize?client_id=tb2331wdrv9r3g7nmdlrj420c9harn&redirect_uri=http://localhost&response_type=token&scope=chat:read+chat:edit+user:read:chat+user:write:chat+user:bot+moderator:manage:chat_messages';
+            window.open(authUrl, '_blank');
+        }
+        
+        function processToken() {
+            const url = document.getElementById('redirectUrl').value;
+            
+            try {
+                // Extract token from URL fragment
+                const urlParams = new URLSearchParams(url.split('#')[1]);
+                const accessToken = urlParams.get('access_token');
+                const expiresIn = parseInt(urlParams.get('expires_in') || '0');
+                const scope = urlParams.get('scope');
+                
+                if (!accessToken) {
+                    alert('No access token found in URL. Please make sure you copied the complete URL.');
+                    return;
+                }
+                
+                // Generate the command to update the token
+                const expiresAt = Date.now() + (expiresIn * 1000);
+                const command = `node -e "
+const fs = require('fs');
+const tokenData = {
+  access_token: '${accessToken}',
+  refresh_token: '22sur89fvfbpqlb6abk5h7ytbh1zao848zw96zkzhhbflobnen',
+  expires_at: ${expiresAt},
+  scope: ['${scope.split(' ').join("', '")}']
+};
+fs.writeFileSync('twitch_token_data.json', JSON.stringify(tokenData, null, 2));
+console.log('✅ Token updated! Expires:', new Date(${expiresAt}));
+"`;
+                
+                document.getElementById('command').textContent = command;
+                document.getElementById('result').style.display = 'block';
+                
+            } catch (error) {
+                alert('Error processing URL: ' + error.message);
+            }
+        }
+    </script>
+</body>
+</html>

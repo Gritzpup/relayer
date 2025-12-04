@@ -20,6 +20,7 @@ export class RelayManager {
   private rateLimiter: RateLimiter;
   private messageHistory: string[] = [];
   private isRunning: boolean = false;
+  private healthCheckInterval: NodeJS.Timeout | null = null;
 
   constructor() {
     this.formatter = new MessageFormatter();
@@ -92,7 +93,7 @@ export class RelayManager {
     logger.info('Relay manager started successfully');
     console.log('[RELAY] ✅ All connections established');
     this.logStatus();
-    
+
     // Log connection status for each service
     console.log('\n[RELAY] Service Status:');
     this.services.forEach(service => {
@@ -103,6 +104,42 @@ export class RelayManager {
       }
     });
     console.log('');
+
+    // Start health check and auto-reconnect for disconnected services
+    this.startHealthCheck();
+  }
+
+  private startHealthCheck(): void {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+    }
+
+    // Check every 30 seconds
+    this.healthCheckInterval = setInterval(async () => {
+      const disconnectedServices: PlatformService[] = [];
+
+      this.services.forEach(service => {
+        const status = service.getStatus();
+        if (!status.connected) {
+          disconnectedServices.push(service);
+        }
+      });
+
+      if (disconnectedServices.length > 0) {
+        console.log(`[HEALTH CHECK] Found ${disconnectedServices.length} disconnected service(s), attempting reconnect...`);
+
+        for (const service of disconnectedServices) {
+          try {
+            console.log(`[HEALTH CHECK] Reconnecting to ${service.platform}...`);
+            await service.connect();
+            console.log(`[HEALTH CHECK] ✅ ${service.platform} reconnected successfully`);
+          } catch (error) {
+            console.error(`[HEALTH CHECK] ❌ Failed to reconnect to ${service.platform}:`, error);
+            // Continue trying other services
+          }
+        }
+      }
+    }, 30000); // Check every 30 seconds
   }
 
   async stop(): Promise<void> {
@@ -114,6 +151,12 @@ export class RelayManager {
     logger.info('Stopping relay manager...');
     this.isRunning = false;
 
+    // Stop health check
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+      this.healthCheckInterval = null;
+    }
+
     // Unsubscribe from Redis events
     await redisEvents.unsubscribe();
 
@@ -124,10 +167,10 @@ export class RelayManager {
     );
 
     await Promise.all(disconnectionPromises);
-    
+
     // Close Redis connections
     await closeRedis();
-    
+
     logger.info('Relay manager stopped successfully');
   }
 
@@ -488,15 +531,17 @@ export class RelayManager {
   private async relayToPlatform(message: RelayMessage, targetPlatform: Platform, mappingId: string): Promise<void> {
     const service = this.services.get(targetPlatform);
     if (!service) {
-      logger.error(`Service not found for platform: ${targetPlatform}`);
+      logger.error(`[RELAY ERROR] Service not found for platform: ${targetPlatform}`);
       return;
     }
 
     const status = service.getStatus();
     if (!status.connected) {
-      logger.warn(`Cannot relay to ${targetPlatform}: Not connected`);
+      logger.warn(`[RELAY BLOCKED] Cannot relay to ${targetPlatform}: Not connected`);
       return;
     }
+
+    logger.debug(`[RELAY] Attempting ${message.platform} → ${targetPlatform} (channel: ${message.channelName || 'unknown'})`);
 
     // Determine target channel based on channel mapping
     let targetChannelId: string | undefined;
@@ -631,10 +676,14 @@ export class RelayManager {
         if (attachments.length === 0) attachments = undefined;
       }
 
-      // // logger.info(`SENDING TO ${targetPlatform}: channel=${targetChannelId}, replyToMessageId=${replyToMessageId}, hasReplyInfo=${!!replyInfo}`);
+      // Send the message
       const sentMessageId = await service.sendMessage(formattedContent, attachments, replyToMessageId, targetChannelId, message);
+
+      // Log successful relay
+      logger.info(`[RELAY SUCCESS] ${message.platform} → ${targetPlatform}: "${message.content?.substring(0, 30)}..." (ID: ${sentMessageId})`);
+
       this.rateLimiter.recordMessage(targetPlatform, formattedContent, attachments);
-      
+
       // Track the sent message ID in our mapping IMMEDIATELY to avoid race conditions
       if (sentMessageId) {
         // Add detailed logging for debugging
@@ -660,6 +709,7 @@ export class RelayManager {
       }
       
     } catch (error) {
+      logger.error(`[RELAY FAILED] ${message.platform} → ${targetPlatform}: ${(error as Error).message}`);
       logError(error as Error, `Failed to relay message to ${targetPlatform}`);
     }
   }

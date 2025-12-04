@@ -156,6 +156,15 @@ async def handle_deleted_messages(client: Client, messages):
     
     db.close()
 
+async def update_heartbeat():
+    """Update heartbeat file to show bot is alive"""
+    heartbeat_file = os.path.join(os.path.dirname(__file__), "heartbeat.txt")
+    try:
+        with open(heartbeat_file, "w") as f:
+            f.write(f"{datetime.now().isoformat()}\n")
+    except Exception as e:
+        logger.warning(f"Failed to update heartbeat: {e}")
+
 async def periodic_check():
     """Periodically check for deleted messages"""
     await asyncio.sleep(10)  # Initial delay
@@ -164,6 +173,10 @@ async def periodic_check():
     while True:
         await asyncio.sleep(15)  # Check more frequently (every 15 seconds instead of 30)
         check_count += 1
+        
+        # Update heartbeat every 5 checks (every ~75 seconds)
+        if check_count % 5 == 0:
+            await update_heartbeat()
         
         try:
             # Only log debug if we have many messages
@@ -292,6 +305,48 @@ async def main():
             error_msg = str(e).lower()
             if ("database is locked" in error_msg or "database lock" in error_msg) and attempt < max_retries - 1:
                 logger.warning(f"Database locked, retrying in {retry_delay} seconds... (attempt {attempt + 1}/{max_retries})")
+                
+                # After 5 attempts, try aggressive database cleanup
+                if attempt == 4:  # 5th attempt (0-indexed)
+                    logger.warning("Attempting aggressive database cleanup after 5 failed attempts...")
+                    try:
+                        import os
+                        import subprocess
+                        
+                        # Force kill any sqlite processes that might be locking the database
+                        try:
+                            subprocess.run(["pkill", "-f", "sqlite"], check=False, capture_output=True)
+                            logger.info("Killed any hanging sqlite processes")
+                        except:
+                            pass
+                        
+                        # Remove session files
+                        session_files = [
+                            "deletion_detector/deletion_bot.session",
+                            "deletion_detector/deletion_bot.session-journal",
+                            "deletion_detector/deletion_bot.session-wal",
+                            "deletion_detector/deletion_bot.session-shm"
+                        ]
+                        
+                        for session_file in session_files:
+                            if os.path.exists(session_file):
+                                try:
+                                    os.remove(session_file)
+                                    logger.info(f"Removed session file: {session_file}")
+                                except Exception as remove_err:
+                                    logger.warning(f"Could not remove {session_file}: {remove_err}")
+                        
+                        # Force garbage collection
+                        import gc
+                        gc.collect()
+                        
+                        # Wait a bit longer after cleanup
+                        await asyncio.sleep(5)
+                        logger.info("Database cleanup completed, continuing with retry...")
+                        
+                    except Exception as cleanup_err:
+                        logger.error(f"Database cleanup failed: {cleanup_err}")
+                
                 await asyncio.sleep(retry_delay)
                 retry_delay = min(retry_delay * 1.5, 30)  # Exponential backoff with cap
             else:
@@ -349,4 +404,13 @@ async def main():
     await app.stop()
 
 if __name__ == "__main__":
-    app.run(main())
+    try:
+        app.run(main())
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user (Ctrl+C)")
+    except Exception as e:
+        logger.error(f"Bot crashed unexpectedly: {e}")
+        logger.error(f"Error type: {type(e).__name__}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise
