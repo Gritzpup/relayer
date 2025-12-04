@@ -66,7 +66,7 @@ export class MessageFormatter {
         case Platform.YouTube:
           return '🔴'; // Red circle for YouTube
         case Platform.Rumble:
-          return '🎬'; // Movie camera for Rumble
+          return '🟢'; // Dark green circle for Rumble
         case Platform.Telegram:
           return '✈️'; // Keep paper plane for Telegram (shouldn't happen in relay)
         default:

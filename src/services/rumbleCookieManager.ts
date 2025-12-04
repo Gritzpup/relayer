@@ -123,14 +123,28 @@ export class RumbleCookieManager {
       const execAsync = promisify(exec);
 
       console.log('💬 Showing zenity dialog...');
-      const result = await execAsync(`
-        DISPLAY=:0 zenity --question --title="🔄 Rumble Login Required" \\
-        --text="Your Rumble bot needs authentication to send chat messages!\\n\\n• Click YES to open Rumble login page\\n• Log in with your Rumble account\\n• Return to this window when logged in\\n• Cookies will be automatically captured\\n\\nClick YES to continue or NO to cancel." \\
-        --ok-label="🚀 Open Rumble Login" --cancel-label="❌ Cancel" \\
-        --width=500 --height=200
-      `);
 
-      if (!result.stderr || result.returnCode === 0) {
+      // Try to show zenity dialog, but don't fail if X11 isn't available
+      let userConfirmed = false;
+      try {
+        const result = await execAsync(`
+          DISPLAY=:0 zenity --question --title="🔄 Rumble Login Required" \\
+          --text="Your Rumble bot needs authentication to send chat messages!\\n\\n• Click YES to open Rumble login page\\n• Log in with your Rumble account\\n• Return to this window when logged in\\n• Cookies will be automatically captured\\n\\nClick YES to continue or NO to cancel." \\
+          --ok-label="🚀 Open Rumble Login" --cancel-label="❌ Cancel" \\
+          --width=500 --height=200
+        `);
+
+        if (!result.stderr || result.returnCode === 0) {
+          userConfirmed = true;
+        }
+      } catch (zenityError: any) {
+        // Zenity failed (likely no X11 access), proceed anyway
+        logger.warn('Zenity dialog failed, proceeding with authentication anyway');
+        logger.warn('Please log in to Rumble when the browser tab opens');
+        userConfirmed = true; // Auto-proceed if no GUI available
+      }
+
+      if (userConfirmed) {
         logger.info('🌐 Opening Rumble login page with cookie capture...');
 
         // Start Puppeteer browser for cookie capture
@@ -142,6 +156,9 @@ export class RumbleCookieManager {
 
     } catch (error) {
       logger.error('❌ GUI Rumble login failed:', error);
+      logger.error('To enable Rumble message sending:');
+      logger.error('1. Open Rumble.com in your browser and log in');
+      logger.error('2. Restart the relayer - it will detect your login automatically');
     }
   }
 
