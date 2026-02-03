@@ -88,7 +88,7 @@ export class MessageFormatter {
         case Platform.YouTube:
           return '🔴'; // Red circle for YouTube
         case Platform.Rumble:
-          return '🎬'; // Movie camera for Rumble
+          return '🟢'; // Dark green circle for Rumble
         default:
           return '💬'; // Default chat bubble
       }

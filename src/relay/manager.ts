@@ -5,6 +5,11 @@ import { TwitchService } from '../services/twitch';
 import { KickService } from '../services/kick';
 import { YouTubeService } from '../services/youtube';
 import { RumbleService } from '../services/rumble';
+
+// Type guard to check if service is TelegramService
+function isTelegramService(service: PlatformService): service is TelegramService {
+  return service.platform === Platform.Telegram;
+}
 import { MessageFormatter } from './formatter';
 import { MessageMapper } from './messageMapper';
 import { RateLimiter } from './rateLimit';
@@ -137,7 +142,14 @@ export class RelayManager {
         for (const service of disconnectedServices) {
           try {
             console.log(`[HEALTH CHECK] Reconnecting to ${service.platform}...`);
-            await service.connect();
+
+            // For Telegram, use forceReconnect to handle conflicts better
+            if (isTelegramService(service)) {
+              await service.forceReconnect();
+            } else {
+              await service.connect();
+            }
+
             console.log(`[HEALTH CHECK] ✅ ${service.platform} reconnected successfully`);
           } catch (error) {
             console.error(`[HEALTH CHECK] ❌ Failed to reconnect to ${service.platform}:`, error);

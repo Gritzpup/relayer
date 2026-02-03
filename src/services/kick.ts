@@ -134,7 +134,9 @@ export class KickService implements PlatformService {
         logger.warn('To receive Kick messages, set KICK_WEBHOOK_URL to your public webhook endpoint');
       }
 
-      // Optional: Connect to WebSocket for real-time status (not required for chat messages)
+      // WebSocket connection disabled - using webhooks for message reception instead
+      // Kick's /broadcasting/auth endpoint is blocked by WAF (403: "Request blocked by security policy")
+      // The only way to receive Kick messages is via webhooks (requires cloudflare tunnel)
       // await this.connectWebSocket();
 
       this.status.connected = true;
@@ -235,25 +237,26 @@ export class KickService implements PlatformService {
           // Subscribe to the chatroom channel
           // channelId at this point should be the alphanumeric ID without "channel_" prefix
           if (this.channelId) {
-            // Try authenticated channel subscription if we have a token
-            const chatroomChannel = `chatrooms.${this.channelId}.v2`;
+            // Try both channel formats - with and without .v2 suffix
+            const chatroomChannel = `private-chatrooms.${this.channelId}.v2`;
 
-            if (accessToken) {
-              // Create auth signature for private channel
-              const authString = `${socketId}:${chatroomChannel}`;
-              const authSignature = `${accessToken}:${authString}`; // Simplified - Kick might need HMAC
+            // Try to get Pusher auth from Kick's API
+            logger.info(`Requesting Pusher auth from Kick API for ${chatroomChannel}`);
+            const pusherAuth = await this.api.getPusherAuth(socketId, chatroomChannel);
 
+            if (pusherAuth) {
+              logger.info(`Got Pusher auth from Kick API: ${pusherAuth}`);
               const chatroomSubscribeMessage = {
                 event: 'pusher:subscribe',
                 data: {
-                  auth: authSignature,
+                  auth: pusherAuth,
                   channel: chatroomChannel
                 }
               };
               this.ws?.send(JSON.stringify(chatroomSubscribeMessage));
-              logger.info(`Subscribed to Kick chatroom with auth: ${chatroomChannel}`);
+              logger.info(`Subscribed to Kick chatroom with API auth: ${chatroomChannel}`);
             } else {
-              // Try without auth
+              logger.warn('Failed to get Pusher auth from Kick API - trying without auth');
               const chatroomSubscribeMessage = {
                 event: 'pusher:subscribe',
                 data: {
@@ -323,6 +326,12 @@ export class KickService implements PlatformService {
         return;
       }
 
+      // Log ALL non-protocol events for debugging
+      if (!message.event.startsWith('pusher:') && !message.event.startsWith('pusher_internal:')) {
+        logger.info(`[KICK WS] Non-protocol event received: ${message.event}`);
+        logger.info(`[KICK WS] Event data: ${JSON.stringify(message.data)}`);
+      }
+
       // Handle chat messages - try different event patterns
       if (message.event === 'App\\Events\\ChatMessageSentEvent' ||
           message.event === 'ChatMessageSentEvent' ||
@@ -330,7 +339,7 @@ export class KickService implements PlatformService {
           message.event.includes('Message')) {
         logger.info(`Kick chat message event received: ${message.event}`);
         this.handleChatMessage(message.data);
-      } else {
+      } else if (!message.event.startsWith('pusher:') && !message.event.startsWith('pusher_internal:')) {
         logger.warn(`[KICK WS] Unhandled event type: ${message.event}`);
       }
 

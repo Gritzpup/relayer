@@ -17,6 +17,9 @@ export class TelegramService implements PlatformService {
   private pollingActive: boolean = false;
   private conflictDetected: boolean = false;
   private adminUserIds: Set<number> = new Set(); // Will be populated from environment variable
+  private lastMessageSentTime: number = 0; // Track when we last successfully sent a message
+  private lastMessageReceivedTime: number = 0; // Track when we last received a message
+  private conflictRetryTimeout: NodeJS.Timeout | null = null;
   private status: ServiceStatus = {
     platform: Platform.Telegram,
     connected: false,
@@ -162,6 +165,7 @@ export class TelegramService implements PlatformService {
       }
 
       this.status.messagesReceived++;
+      this.lastMessageReceivedTime = Date.now();
       const username = msg.from?.username || msg.from?.first_name || 'Unknown';
       
       // Enhanced debug logging for reply detection
@@ -325,17 +329,17 @@ export class TelegramService implements PlatformService {
           this.isConnected = false;
           this.status.connected = false;
           this.pollingActive = false;  // Make sure to reset this
-          
+
           // Stop polling immediately to prevent further errors
           this.bot.stopPolling({ cancel: true }).catch(err => {
             logger.error('Error stopping polling after conflict:', err);
           });
-          
-          // DO NOT try to reconnect when there's a conflict
-          // The user needs to resolve this manually
-          logger.warn('IMPORTANT: Another bot instance is using the same token. Please stop the other instance before restarting this one.');
+
+          // Schedule a retry after 60 seconds - the other instance may have died
+          logger.warn('[TELEGRAM] Bot conflict detected. Will retry in 60 seconds...');
+          this.scheduleConflictRetry();
         }
-        return; // Don't reconnect for conflicts
+        return; // Don't reconnect immediately for conflicts
       }
       
       // Reset conflict flag if we get a different error
@@ -516,15 +520,66 @@ export class TelegramService implements PlatformService {
   trackMessage(messageId: number, mappingId: string): void {
     this.messageTracker.set(messageId, mappingId);
     logger.info(`Tracking Telegram message ${messageId} with mapping ${mappingId}`);
-    
-    // Clean up old entries - limit map size
+
+    // Clean up old entries in batches - limit map size
     if (this.messageTracker.size > 1000) {
-      // Remove oldest entries
-      const firstKey = this.messageTracker.keys().next().value;
-      if (firstKey) {
-        this.messageTracker.delete(firstKey);
+      // Remove oldest 200 entries in batch to reduce cleanup frequency
+      const keysToDelete = Array.from(this.messageTracker.keys()).slice(0, 200);
+      for (const key of keysToDelete) {
+        this.messageTracker.delete(key);
       }
+      logger.debug(`Cleaned up ${keysToDelete.length} old message tracker entries (remaining: ${this.messageTracker.size})`);
     }
+  }
+
+  // Schedule a retry after conflict detection
+  private scheduleConflictRetry(): void {
+    // Clear any existing retry timeout
+    if (this.conflictRetryTimeout) {
+      clearTimeout(this.conflictRetryTimeout);
+    }
+
+    // Retry after 60 seconds
+    this.conflictRetryTimeout = setTimeout(async () => {
+      logger.info('[TELEGRAM] Attempting to reconnect after conflict timeout...');
+      this.conflictDetected = false;
+      this.conflictRetryTimeout = null;
+
+      try {
+        await this.forceReconnect();
+        logger.info('[TELEGRAM] Successfully reconnected after conflict');
+      } catch (error) {
+        logger.error('[TELEGRAM] Failed to reconnect after conflict, scheduling another retry:', error);
+        // Schedule another retry
+        this.scheduleConflictRetry();
+      }
+    }, 60000);
+  }
+
+  // Force a full reconnect - stops polling completely and restarts
+  async forceReconnect(): Promise<void> {
+    logger.info('[TELEGRAM] Force reconnect initiated...');
+
+    // Clear conflict flag
+    this.conflictDetected = false;
+
+    // Stop any existing polling
+    try {
+      await this.bot.stopPolling({ cancel: true });
+    } catch (e) {
+      // Ignore errors stopping polling
+    }
+
+    // Reset all state
+    this.isConnected = false;
+    this.pollingActive = false;
+    this.status.connected = false;
+
+    // Wait a moment for connections to fully close
+    await new Promise(resolve => setTimeout(resolve, 3000));
+
+    // Try to connect
+    await this.connectInternal();
   }
 
   private async connectInternal(): Promise<void> {
@@ -688,15 +743,21 @@ export class TelegramService implements PlatformService {
     logger.info('Disconnecting Telegram service...');
     this.isShuttingDown = true;
     this.reconnectManager.stop();
-    
+
+    // Clear conflict retry timeout
+    if (this.conflictRetryTimeout) {
+      clearTimeout(this.conflictRetryTimeout);
+      this.conflictRetryTimeout = null;
+    }
+
     // Clear message tracker
     this.messageTracker.clear();
-    
+
     if (this.pollingActive) {
       await this.bot.stopPolling({ cancel: true });
       this.pollingActive = false;
     }
-    
+
     this.isConnected = false;
     this.status.connected = false;
     this.conflictDetected = false;
@@ -873,8 +934,9 @@ export class TelegramService implements PlatformService {
       }
       
       this.status.messagesSent++;
+      this.lastMessageSentTime = Date.now();
       logPlatformMessage('Telegram', 'out', content);
-      
+
       return messageId;
     } catch (error) {
       logError(error as Error, 'Telegram send message');
@@ -947,7 +1009,7 @@ export class TelegramService implements PlatformService {
     if (!this.isConnected || !this.pollingActive || this.conflictDetected) {
       return false;
     }
-    
+
     try {
       // Try to get bot info as a health check
       await this.bot.getMe();
@@ -959,6 +1021,34 @@ export class TelegramService implements PlatformService {
       this.status.connected = false;
       return false;
     }
+  }
+
+  // Check if relay appears to be stalled (connected but not sending messages)
+  isRelayStalled(): boolean {
+    // If we've never sent a message, we're not stalled
+    if (this.lastMessageSentTime === 0) {
+      return false;
+    }
+
+    // If we're not connected, that's a different issue
+    if (!this.isConnected || this.conflictDetected) {
+      return false;
+    }
+
+    // Check if it's been more than 5 minutes since we sent a message
+    // This is a heuristic - adjust based on expected traffic
+    const fiveMinutes = 5 * 60 * 1000;
+    const timeSinceLastSend = Date.now() - this.lastMessageSentTime;
+
+    return timeSinceLastSend > fiveMinutes;
+  }
+
+  // Get time since last activity
+  getLastActivityTime(): { sent: number; received: number } {
+    return {
+      sent: this.lastMessageSentTime,
+      received: this.lastMessageReceivedTime
+    };
   }
 
   private async convertMessage(msg: TelegramBot.Message, overrideChannelName?: string): Promise<RelayMessage> {

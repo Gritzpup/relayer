@@ -179,15 +179,8 @@ export const config: Config = {
     token: process.env.KICK_TOKEN,
     webhookUrl: process.env.KICK_WEBHOOK_URL,
   } : undefined,
-  youtube: process.env.YOUTUBE_CHANNEL_ID ? {
-    channelId: getEnvVar('YOUTUBE_CHANNEL_ID'),
-    liveChatId: process.env.YOUTUBE_LIVE_CHAT_ID,
-    clientId: process.env.YOUTUBE_CLIENT_ID,
-    clientSecret: process.env.YOUTUBE_CLIENT_SECRET,
-    refreshToken: process.env.YOUTUBE_REFRESH_TOKEN,
-    accessToken: process.env.YOUTUBE_ACCESS_TOKEN,
-    pollingInterval: getEnvNumber('YOUTUBE_POLLING_INTERVAL', 30000),
-  } : undefined,
+  // YouTube disabled - token expired/revoked
+  youtube: undefined,
   rumble: process.env.RUMBLE_API_KEY ? {
     apiKey: getEnvVar('RUMBLE_API_KEY'),
     pollingInterval: getEnvNumber('RUMBLE_POLLING_INTERVAL', 5000),

@@ -258,6 +258,8 @@ export class RumbleService implements PlatformService {
       return undefined;
     }
 
+    let chatEndpoint = ''; // Declare in outer scope for error handling
+
     try {
       // Get chat ID from cookie manager
       let chatId = await rumbleCookieManager.getChatId();
@@ -297,7 +299,7 @@ export class RumbleService implements PlatformService {
       }
 
       // Send message to Rumble chat API
-      const chatEndpoint = `https://web7.rumble.com/chat/api/chat/${chatId}/stream`;
+      chatEndpoint = `https://web7.rumble.com/chat/api/chat/${chatId}/stream`;
 
       const payload = {
         type: 'messages',

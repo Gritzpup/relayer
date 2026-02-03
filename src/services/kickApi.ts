@@ -247,4 +247,44 @@ export class KickAPI {
       return false;
     }
   }
+
+  /**
+   * Get Pusher auth signature for private channel subscription
+   */
+  async getPusherAuth(socketId: string, channelName: string): Promise<string | null> {
+    try {
+      let accessToken = await kickTokenManager.getAccessToken();
+
+      // Try form-encoded request (more common for auth endpoints)
+      const params = new URLSearchParams({
+        socket_id: socketId,
+        channel_name: channelName
+      });
+
+      const response = await axios.post(
+        `https://kick.com/broadcasting/auth`,
+        params.toString(),
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Accept': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Origin': 'https://kick.com',
+            'Referer': 'https://kick.com/gritzpup',
+          },
+          timeout: 10000
+        }
+      );
+
+      logger.info(`Pusher auth response: ${JSON.stringify(response.data)}`);
+      return response.data?.auth || response.data;
+    } catch (error) {
+      logger.error('Failed to get Pusher auth from Kick:', error);
+      if (axios.isAxiosError(error)) {
+        logger.error(`Kick API error: ${error.response?.status} - ${JSON.stringify(error.response?.data)}`);
+      }
+      return null;
+    }
+  }
 }

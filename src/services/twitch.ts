@@ -374,8 +374,11 @@ export class TwitchService implements PlatformService {
   async disconnect(): Promise<void> {
     this.reconnectManager.stop();
     this.isConnecting = false;
-    
+
     try {
+      // Remove all listeners before disconnecting to prevent memory leaks
+      this.client.removeAllListeners();
+
       if (this.client.readyState() === 'OPEN') {
         await this.client.disconnect();
       }
@@ -383,11 +386,11 @@ export class TwitchService implements PlatformService {
       // Log but don't throw - we're disconnecting anyway
       logger.debug('Error during Twitch disconnect (ignored):', error);
     }
-    
+
     // Clear recent messages on disconnect
     this.recentMessages.clear();
     this.continuedMessages.clear();
-    
+
     this.status.connected = false;
     logger.info('Twitch disconnected');
   }
@@ -498,8 +501,18 @@ export class TwitchService implements PlatformService {
       const continuedIds = allMessageIds.slice(1); // All IDs except the first
       this.continuedMessages.set(firstMessageId, continuedIds);
       logger.info(`TWITCH SPLIT: Tracked ${continuedIds.length} continued messages for parent ${firstMessageId}`);
+
+      // Limit continuedMessages Map size to prevent memory leaks
+      if (this.continuedMessages.size > 500) {
+        // Delete oldest entries in batches
+        const keysToDelete = Array.from(this.continuedMessages.keys()).slice(0, 100);
+        for (const key of keysToDelete) {
+          this.continuedMessages.delete(key);
+        }
+        logger.debug(`Cleaned up ${keysToDelete.length} old continued message entries`);
+      }
     }
-    
+
     return firstMessageId;
   }
 

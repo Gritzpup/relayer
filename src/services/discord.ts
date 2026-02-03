@@ -124,9 +124,15 @@ export class DiscordService implements PlatformService {
       this.reconnectManager.scheduleReconnect();
     });
     
-    // Add debug event
+    // Add debug event - 🔇 SILENCED: Filter out common spammy debug messages
     this.client.on('debug', (info: string) => {
-      if (info.includes('Heartbeat') || info.includes('heartbeat')) return; // Skip heartbeat spam
+      // Skip all routine WebSocket debug messages to reduce log spam
+      if (info.includes('Heartbeat') || info.includes('heartbeat')) return;
+      if (info.includes('[WS =>')) return; // Skip all WebSocket debug messages
+      if (info.includes('Shard')) return; // Skip shard management messages
+      if (info.includes('Waiting for event')) return;
+      if (info.includes('Resumed and replayed')) return;
+      // Only log actual issues
       logger.debug(`[DISCORD DEBUG] ${info}`);
     });
     
@@ -236,6 +242,7 @@ export class DiscordService implements PlatformService {
 
   async disconnect(): Promise<void> {
     this.reconnectManager.stop();
+    this.client.removeAllListeners();
     await this.client.destroy();
     this.status.connected = false;
     logger.info('Discord disconnected');
