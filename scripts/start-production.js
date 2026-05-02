@@ -9,7 +9,19 @@ const DELETION_DETECTOR_DIR = path.join(__dirname, '..', 'deletion_detector');
 const SESSION_FILE = path.join(DELETION_DETECTOR_DIR, 'sessions', 'deletion_detector.session');
 const VENV_DIR = path.join(DELETION_DETECTOR_DIR, 'venv');
 const LOCK_FILE = path.join(__dirname, '..', '.relay.lock');
-const FIXED_PORT = process.env.WEBHOOK_PORT || 5847; // Use fixed port from .env
+const FIXED_PORT = process.env.WEBHOOK_PORT || 15847; // Use fixed port from .env
+
+const LOG_DIR = path.join(__dirname, '..', 'logs');
+try { fs.mkdirSync(LOG_DIR, { recursive: true }); } catch (e) { /* ignore */ }
+const LOG_FILE = path.join(LOG_DIR, `relay-${new Date().toISOString().slice(0, 10)}.log`);
+const logStream = fs.createWriteStream(LOG_FILE, { flags: 'a' });
+const stripAnsi = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, '');
+function writeLog(line) {
+  try {
+    const text = stripAnsi(line);
+    logStream.write(`[${new Date().toISOString()}] ${text}${text.endsWith('\n') ? '' : '\n'}`);
+  } catch (e) { /* ignore */ }
+}
 
 // Colors for terminal output
 const colors = {
@@ -23,6 +35,7 @@ const colors = {
 
 function log(message, color = '') {
   console.log(`${color}${message}${colors.reset}`);
+  writeLog(`[wrapper] ${message}`);
 }
 
 function checkLockFile() {
@@ -85,17 +98,17 @@ function killExistingProcesses() {
   // Kill by patterns first (more aggressive)
   try {
     log('  Killing tsx processes...', colors.cyan);
-    execSync("pkill -9 -f 'tsx.*src/index' 2>/dev/null || true");
+    execSync("pkill -9 -f '/relayer/.*src/index' 2>/dev/null || true");
   } catch (e) { /* ignore */ }
 
   try {
     log('  Killing node relay processes...', colors.cyan);
-    execSync("pkill -9 -f 'node.*relay' 2>/dev/null || true");
+    execSync("pkill -9 -f '/relayer/scripts/start-production' 2>/dev/null || true");
   } catch (e) { /* ignore */ }
 
   try {
     log('  Killing deletion detector...', colors.cyan);
-    execSync("pkill -9 -f 'deletion_detector.*bot' 2>/dev/null || true");
+    execSync("pkill -9 -f '/relayer/deletion_detector/.*bot' 2>/dev/null || true");
   } catch (e) { /* ignore */ }
 
   // Wait for processes to die
@@ -222,6 +235,7 @@ async function startServices() {
 
   deletionDetector.stdout.on('data', (data) => {
     process.stdout.write(`${colors.cyan}[Deletion Detector]${colors.reset} ${data}`);
+    writeLog(`[deletion-detector] ${data}`);
   });
 
   deletionDetector.stderr.on('data', (data) => {
@@ -236,6 +250,7 @@ async function startServices() {
       // INFO, DEBUG, and other logs
       process.stdout.write(`${colors.cyan}[Deletion Detector]${colors.reset} ${data}`);
     }
+    writeLog(`[deletion-detector] ${dataStr}`);
   });
 
   deletionDetector.on('error', (error) => {
@@ -249,7 +264,7 @@ async function startServices() {
   // Start main relay bot WITHOUT watch mode for production
   log('Starting relay service (production mode - no auto-restart)...', colors.cyan);
   const relayBot = spawn('npx', ['tsx', 'src/index.ts'], {
-    stdio: 'inherit',
+    stdio: ['ignore', 'pipe', 'pipe'],
     shell: true,
     env: {
       ...process.env,
@@ -257,9 +272,31 @@ async function startServices() {
     }
   });
 
+  relayBot.stdout.on('data', (data) => {
+    process.stdout.write(data);
+    writeLog(`[relay-bot] ${data}`);
+  });
+  relayBot.stderr.on('data', (data) => {
+    process.stderr.write(data);
+    writeLog(`[relay-bot:stderr] ${data}`);
+  });
+
   // Handle process termination
   const shutdown = (signal) => {
-    log(`\n\n🛑 Shutting down services (${signal})...`, colors.yellow);
+    // Log caller identity for SIGTERM debugging
+    try {
+      const { execSync } = require('child_process');
+      const parentPid = process.ppid;
+      const parentPpid = parseInt(execSync(`cat /proc/${parentPid}/stat 2>/dev/null | awk '{print \$4}'`).toString().trim());
+      const parentComm = execSync(`cat /proc/${parentPid}/comm 2>/dev/null`).toString().trim();
+      const parentCmd = execSync(`cat /proc/${parentPid}/cmdline 2>/dev/null | tr '\\0' ' '`).toString().trim();
+      const grandparentComm = parentPpid ? execSync(`cat /proc/${parentPpid}/comm 2>/dev/null`).toString().trim() : 'unknown';
+      log(`⚠️ shutdown signal=${signal} from PID=${parentPid} comm=${parentComm} cmd="${parentCmd.substring(0,100)}" grandparent=${grandparentComm}`, colors.red);
+    } catch (e) {
+      log(`⚠️ shutdown signal=${signal} from PID=${process.ppid} (details unavailable: ${e.message})`, colors.red);
+    }
+    
+    log(`🛑 Shutting down services (${signal})...`, colors.yellow);
     
     removeLockFile();
     
@@ -298,25 +335,26 @@ async function startServices() {
     process.exit(1);
   });
   
-  // Also handle deletion detector exit
+  // Deletion detector exit — log warning but keep relay running
+  // The relay core (Discord/Twitch relay) is more important than deletion detection
   deletionDetector.on('exit', (code, signal) => {
-    log(`Deletion detector exited with code ${code}, signal ${signal}`, colors.yellow);
-    if (!relayBot.killed && !deletionDetector.killed) {
-      log('Deletion detector stopped unexpectedly, shutting down relay bot...', colors.red);
-      relayBot.kill();
-      removeLockFile();
-      process.exit(1);
-    }
+    log(`⚠️ Deletion detector exited with code ${code}, signal ${signal} — continuing without it`, colors.yellow);
+    // Don't kill the relay — deletion detection is auxiliary
+    // The core relay service should keep running
   });
   
   // Keep the process running
-  relayBot.on('close', (code) => {
-    log(`Relay bot exited with code ${code}`, colors.yellow);
+  relayBot.on('exit', (code, signal) => {
+    if (signal) {
+      log(`❌ Relay bot KILLED by signal ${signal} (parent PID ${process.pid}, child PID ${relayBot.pid}, ppid sender unknown)`, colors.red);
+    } else {
+      log(`Relay bot exited with code ${code}`, colors.yellow);
+    }
     if (!deletionDetector.killed) {
       deletionDetector.kill();
     }
     removeLockFile();
-    process.exit(code);
+    process.exit(typeof code === 'number' ? code : 1);
   });
 }
 
@@ -328,12 +366,12 @@ async function main() {
   log('=' .repeat(50), colors.cyan);
 
   try {
-    // Check for existing instance via lock file
-    checkLockFile();
-    
-    // Kill any existing processes first
+    // Kill any existing processes first (before lock check, so Tilt restarts work)
     killExistingProcesses();
-    
+
+    // Check for existing instance via lock file (after cleanup)
+    checkLockFile();
+
     // Create lock file for this instance
     createLockFile();
     
