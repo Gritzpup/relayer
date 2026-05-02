@@ -6,141 +6,59 @@ import express from 'express';
 import webhookRouter, { setRelayManager } from './api/webhook';
 import { twitchTokenManager } from './services/twitchTokenManager';
 import { memoryMonitor } from './utils/memoryMonitor';
+import fs from 'fs';
 
 let relayManager: RelayManager | null = null;
 let webhookServer: any = null; // Store server reference for cleanup
 
-async function checkSingleInstance(checkType = 'startup') {
-  console.log(`🔍 [${checkType.toUpperCase()}] Checking for multiple relayer instances...`);
-  console.log(`🔍 [${checkType.toUpperCase()}] Current process PID: ${process.pid}`);
-  console.log(`🔍 [${checkType.toUpperCase()}] Parent process PID: ${process.ppid}`);
-  console.log(`🔍 [${checkType.toUpperCase()}] Process start time: ${new Date().toISOString()}`);
-  
-  // Check for existing relayer processes using a different approach
-  // Look for processes with our unique relayer signature in command line
-  const { spawn } = require('child_process');
-  return new Promise((resolve, reject) => {
-    const check = spawn('ps', ['aux']);
-    let output = '';
-    
-    // 🔥 MEMORY LEAK FIX: Set timeout to prevent hanging processes
-    const timeout = setTimeout(() => {
-      check.kill('SIGTERM');
-      console.error(`❌ [${checkType.toUpperCase()}] Process check timed out, killing ps command`);
-      reject(new Error('Process check timeout'));
-    }, 5000);
-    
-    check.stdout.on('data', (data: Buffer) => {
-      output += data.toString();
-    });
-    
-    check.stderr.on('data', (data: Buffer) => {
-      console.error(`🔍 [${checkType.toUpperCase()}] ps stderr:`, data.toString());
-    });
-    
-    check.on('close', (code) => {
-      clearTimeout(timeout);
-      const lines = output.trim().split('\n');
-      // Only match THIS relayer instance — must include the relayer-specific path
-      // to avoid matching unrelated tsx processes (e.g., hermes-trading-firm)
-      const relayerLines = lines.filter(line => 
-        (line.includes('/mnt/Storage/github/relayer') && line.includes('src/index.ts'))
-      );
-      
-      console.log(`🔍 [${checkType.toUpperCase()}] Found relayer processes:`, relayerLines);
-      
-      const allPids = relayerLines.map(line => {
-        const parts = line.trim().split(/\s+/);
-        return parts[1]; // PID is second column in ps aux
-      }).filter(pid => pid && pid.trim() && /^\d+$/.test(pid));
-      
-      const otherPids = allPids.filter(pid => 
-        pid !== process.pid.toString() && 
-        pid !== process.ppid.toString()
-      );
-      
-      console.log(`🔍 [${checkType.toUpperCase()}] All relayer PIDs found: ${allPids.join(', ')}`);
-      console.log(`🔍 [${checkType.toUpperCase()}] Other PIDs (not this process): ${otherPids.join(', ')}`);
-      
-      if (otherPids.length > 0) {
-        const errorMsg = `❌ [${checkType.toUpperCase()}] MULTIPLE INSTANCES DETECTED!`;
-        console.error(errorMsg);
-        console.error(`❌ [${checkType.toUpperCase()}] Found ${otherPids.length} existing relayer instances`);
-        console.error(`❌ [${checkType.toUpperCase()}] Existing PIDs: ${otherPids.join(', ')}`);
-        console.error(`❌ [${checkType.toUpperCase()}] Current PID: ${process.pid}`);
-        console.error(`❌ [${checkType.toUpperCase()}] Full process list:`);
-        lines.forEach(line => console.error(`❌ [${checkType.toUpperCase()}] ${line}`));
-        
-        logger.error(errorMsg);
-        logger.error(`Multiple instances - Current: ${process.pid}, Others: ${otherPids.join(', ')}`);
-        
-        if (checkType === 'periodic') {
-          console.error(`❌ [PERIODIC] STOPPING RELAYER DUE TO MULTIPLE INSTANCES`);
-          logger.error('STOPPING RELAYER DUE TO MULTIPLE INSTANCES DURING PERIODIC CHECK');
-          process.exit(1);
-        }
-        
-        console.log(`🔄 [${checkType.toUpperCase()}] Attempting to kill existing instances...`);
-        
-        // Kill the OTHER instances (older ones), not this one
-        let killedCount = 0;
-        otherPids.forEach(pid => {
-          try {
-            process.kill(parseInt(pid), 'SIGTERM');
-            console.log(`✅ [${checkType.toUpperCase()}] Killed old relayer PID ${pid}`);
-            killedCount++;
-          } catch (err) {
-            console.log(`⚠️ [${checkType.toUpperCase()}] Could not kill PID ${pid}:`, (err as Error).message);
-          }
-        });
-        
-        if (killedCount > 0) {
-          console.log(`🎯 [${checkType.toUpperCase()}] Killed ${killedCount} existing instances. This instance (PID: ${process.pid}) will continue.`);
-          // Wait for old processes to die
-          setTimeout(() => resolve(true), 3000);
-        } else {
-          console.error(`❌ [${checkType.toUpperCase()}] FAILED TO KILL ANY INSTANCES - STOPPING TO PREVENT CONFLICTS`);
-          logger.error('FAILED TO KILL ANY INSTANCES - STOPPING TO PREVENT CONFLICTS');
-          process.exit(1);
-        }
-      } else {
-        console.log(`✅ [${checkType.toUpperCase()}] Single instance check passed - no other instances found`);
-        resolve(true);
+// Simple lockfile-based single instance enforcement — no ps/grep required
+const LOCK_FILE = '/tmp/relayer.lock';
+
+function cleanupLockfile() {
+  try {
+    if (fs.existsSync(LOCK_FILE)) {
+      const content = fs.readFileSync(LOCK_FILE, 'utf8').trim();
+      if (content === process.pid.toString()) {
+        fs.unlinkSync(LOCK_FILE);
       }
-    });
-    
-    // 🔥 MEMORY LEAK FIX: Handle process errors and cleanup
-    check.on('error', (error) => {
-      clearTimeout(timeout);
-      console.error(`❌ [${checkType.toUpperCase()}] Error spawning ps command:`, error);
-      reject(error);
-    });
-  });
-}
-
-// Periodic instance check - REDUCED FREQUENCY TO PREVENT MEMORY LEAKS
-let periodicCheckInterval: NodeJS.Timeout | null = null;
-
-function startPeriodicInstanceCheck() {
-  // 🔥 MEMORY LEAK FIX: Reduced from 30s to 5 minutes and added cleanup
-  periodicCheckInterval = setInterval(async () => {
-    try {
-      console.log('🔄 [PERIODIC] Running periodic instance check...');
-      await checkSingleInstance('periodic');
-    } catch (error) {
-      console.error('❌ [PERIODIC] Error during periodic instance check:', error);
-      logger.error('Error during periodic instance check:', error);
     }
-  }, 300000); // Check every 5 minutes instead of 30 seconds
+  } catch { /* ignore */ }
 }
 
-function stopPeriodicInstanceCheck() {
-  if (periodicCheckInterval) {
-    clearInterval(periodicCheckInterval);
-    periodicCheckInterval = null;
-    console.log('✅ Stopped periodic instance checking');
+async function acquireLock(): Promise<boolean> {
+  cleanupLockfile();
+  const myPid = process.pid.toString();
+  try {
+    // Try to create lock file exclusively
+    fs.writeFileSync(LOCK_FILE, myPid, { flag: 'wx' });
+    console.log(`🔒 [LOCK] Acquired lock (PID ${myPid})`);
+    return true;
+  } catch (err: any) {
+    if (err.code === 'EEXIST') {
+      // Lock file exists — check if the holding process is still alive
+      try {
+        const holder = parseInt(fs.readFileSync(LOCK_FILE, 'utf8').trim());
+        try {
+          process.kill(holder, 0); // Check if process exists
+          console.log(`🔒 [LOCK] Existing relayer holding lock (PID ${holder}), this instance (PID ${myPid}) will exit`);
+          return false;
+        } catch {
+          // Holder is dead but lock file wasn't cleaned up — steal the lock
+          fs.writeFileSync(LOCK_FILE, myPid);
+          console.log(`🔒 [LOCK] Previous holder (PID ${holder}) dead, acquired stale lock (PID ${myPid})`);
+          return true;
+        }
+      } catch {
+        fs.writeFileSync(LOCK_FILE, myPid);
+        return true;
+      }
+    }
+    console.error(`🔒 [LOCK] Unexpected lock error:`, err);
+    return false;
   }
 }
+
+// No periodic instance check — lockfile handles singleton at startup
 
 async function main() {
   try {
@@ -148,12 +66,15 @@ async function main() {
     console.log('       STARTING CHAT RELAY SERVICE');
     console.log('==================================================\n');
     
-    // Temporarily disable instance checking to get service running
-    // await checkSingleInstance('startup');
-    
-    // Temporarily disable periodic instance checking 
-    // console.log('🔄 Starting periodic instance monitoring (every 30 seconds)...');
-    // startPeriodicInstanceCheck();
+    // Lockfile-based single instance enforcement
+    const lockOk = await acquireLock();
+    if (!lockOk) {
+      console.log('Another relayer instance is already running. Exiting.');
+      process.exit(0);
+    }
+    process.on('exit', cleanupLockfile);
+    process.on('SIGINT', cleanupLockfile);
+    process.on('SIGTERM', cleanupLockfile);
     
     console.log('✅ Chat Relay Service startup initiated...');
     
