@@ -208,6 +208,18 @@ async function main() {
 
 function setupGracefulShutdown() {
   const shutdown = async (signal: string) => {
+    // Debug: log who sent this signal
+    try {
+      const { execSync } = require('child_process');
+      const ppid = process.ppid;
+      const grandparent = parseInt(execSync(`cat /proc/${ppid}/stat 2>/dev/null | awk '{print \$4}'`).toString().trim());
+      const ppidComm = execSync(`cat /proc/${ppid}/comm 2>/dev/null`).toString().trim();
+      const ppidCmd = execSync(`cat /proc/${ppid}/cmdline 2>/dev/null | tr '\\0' ' '`).toString().trim().substring(0, 120);
+      const gpComm = grandparent ? execSync(`cat /proc/${grandparent}/comm 2>/dev/null`).toString().trim() : 'N/A';
+      console.error(`[SIGDEBUG] signal=${signal} sender_pid=${ppid} sender_comm="${ppidComm}" sender_cmd="${ppidCmd}" grandparent_pid=${grandparent} gp_comm="${gpComm}"`);
+    } catch (e: any) {
+      console.error(`[SIGDEBUG] signal=${signal} sender_pid=${process.ppid} (details failed: ${e.message})`);
+    }
     console.log(`Received ${signal}, shutting down gracefully...`);
     
     // 🔥 MEMORY LEAK FIX: Stop periodic instance checking
