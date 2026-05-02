@@ -262,15 +262,18 @@ async function startServices() {
   await new Promise(resolve => setTimeout(resolve, 3000));
 
   // Start main relay bot WITHOUT watch mode for production
-  log('Starting relay service (production mode - no auto-restart)...', colors.cyan);
+  // Detached: survives wrapper being SIGTERM'd by tilt's proc manager
+  log('Starting relay service (production mode - detached, survives wrapper death)...', colors.cyan);
   const relayBot = spawn('npx', ['tsx', 'src/index.ts'], {
     stdio: ['ignore', 'pipe', 'pipe'],
     shell: true,
+    detached: true,
     env: {
       ...process.env,
       WEBHOOK_PORT: FIXED_PORT.toString()
     }
   });
+  relayBot.unref(); // Fully detach so wrapper exit doesn't affect relay
 
   relayBot.stdout.on('data', (data) => {
     process.stdout.write(data);
@@ -300,6 +303,9 @@ async function startServices() {
     
     removeLockFile();
     
+    // NOTE: relay bot is detached (survives wrapper death) — do NOT kill it
+    // Only kill deletion detector, clean up lockfile, then exit
+    
     // Kill deletion detector
     if (deletionDetector && !deletionDetector.killed) {
       log('Stopping deletion detector...', colors.yellow);
@@ -314,16 +320,12 @@ async function startServices() {
       }, 2000);
     }
     
-    // Kill relay bot
-    if (relayBot && !relayBot.killed) {
-      log('Stopping relay bot...', colors.yellow);
-      relayBot.kill('SIGTERM');
-    }
-    
-    // Exit after a short delay
+    // Exit immediately — relay is detached and must keep running
+    log('Wrapper exiting (relay is detached and continues independently)', colors.cyan);
     setTimeout(() => {
+      removeLockFile();
       process.exit(0);
-    }, 3000);
+    }, 1000);
   };
 
   process.on('SIGINT', () => shutdown('SIGINT'));
@@ -343,18 +345,12 @@ async function startServices() {
     // The core relay service should keep running
   });
   
-  // Keep the process running
-  relayBot.on('exit', (code, signal) => {
-    if (signal) {
-      log(`❌ Relay bot KILLED by signal ${signal} (parent PID ${process.pid}, child PID ${relayBot.pid}, ppid sender unknown)`, colors.red);
-    } else {
-      log(`Relay bot exited with code ${code}`, colors.yellow);
-    }
-    if (!deletionDetector.killed) {
-      deletionDetector.kill();
-    }
-    removeLockFile();
-    process.exit(typeof code === 'number' ? code : 1);
+  // Keep the process running — the deletion detector exit is the only thing that matters
+  // Relay is detached and has its own lifecycle (may outlive the wrapper)
+  deletionDetector.on('exit', (code, signal) => {
+    log(`⚠️ Deletion detector exited with code ${code}, signal ${signal} — continuing without it`, colors.yellow);
+    // Don't kill the relay — deletion detection is auxiliary
+    // The core relay service should keep running
   });
 }
 
