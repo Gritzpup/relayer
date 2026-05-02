@@ -41,10 +41,10 @@ async function checkSingleInstance(checkType = 'startup') {
     check.on('close', (code) => {
       clearTimeout(timeout);
       const lines = output.trim().split('\n');
-      // Look for lines that contain "STARTING CHAT RELAY SERVICE" or our main function
+      // Only match THIS relayer instance — must include the relayer-specific path
+      // to avoid matching unrelated tsx processes (e.g., hermes-trading-firm)
       const relayerLines = lines.filter(line => 
-        (line.includes('tsx') && line.includes('src/index.ts')) ||
-        (line.includes('node') && line.includes('relayer') && line.includes('src/index.ts'))
+        (line.includes('/mnt/Storage/github/relayer') && line.includes('src/index.ts'))
       );
       
       console.log(`🔍 [${checkType.toUpperCase()}] Found relayer processes:`, relayerLines);
@@ -212,7 +212,7 @@ async function main() {
       }
     });
     
-    const PORT = process.env.WEBHOOK_PORT || 4002;
+    const PORT = process.env.WEBHOOK_PORT || 14002;
     // console.log(`[STARTUP] Attempting to start webhook server on port ${PORT}...`);
     
     webhookServer = app.listen(PORT, () => {
