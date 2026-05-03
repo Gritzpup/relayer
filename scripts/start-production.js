@@ -262,21 +262,24 @@ async function startServices() {
   await new Promise(resolve => setTimeout(resolve, 3000));
 
   // Start main relay bot WITHOUT watch mode for production
-  // Detached: survives wrapper being SIGTERM'd by tilt's proc manager
-  // IMPORTANT: no shell=true, no stdio pipes — relay is fully independent
-  // Using tsx directly (not npx) avoids shell intermediary that breaks detachment
-  log('Starting relay service (production mode - detached, survives wrapper death)...', colors.cyan);
+  // NOT detached — runs as normal child of wrapper so Tilt can track it
+  // When wrapper receives SIGTERM from tilt, it exits WITHOUT killing relay
+  // Relay gets reparented to tilt's proc manager and keeps running
+  log('Starting relay service (production mode)...', colors.cyan);
   const relayBot = spawn('/home/ubuntubox/.npm-global/bin/tsx', ['src/index.ts'], {
-    stdio: 'ignore',
-    detached: true,
+    stdio: ['ignore', 'pipe', 'pipe'],
     env: {
       ...process.env,
       WEBHOOK_PORT: FIXED_PORT.toString()
     },
     cwd: __dirname + '/..'
   });
-  relayBot.unref(); // Fully detach so wrapper exit doesn't affect relay
-  log(`Relay spawned as detached PID ${relayBot.pid} — it is now independent of this wrapper`, colors.cyan);
+
+  relayBot.stdout.on('data', (data) => process.stdout.write(`${colors.green}[Relay]${colors.reset} ${data}`));
+  relayBot.stderr.on('data', (data) => process.stderr.write(`${colors.red}[Relay Error]${colors.reset} ${data}`));
+  relayBot.on('error', (err) => log(`Relay failed to start: ${err.message}`, colors.red));
+
+  log(`Relay started as PID ${relayBot.pid}`, colors.cyan);
 
   // Handle process termination
   const shutdown = (signal) => {
@@ -297,8 +300,10 @@ async function startServices() {
     
     removeLockFile();
     
-    // NOTE: relay bot is detached (survives wrapper death) — do NOT kill it
-    // Only kill deletion detector, clean up lockfile, then exit
+    // NOTE: relay is NOT detached — it is a child of this wrapper.
+    // When this wrapper exits (SIGTERM from tilt), the relay gets reparented
+    // to tilt's proc manager and continues running. Do NOT kill relay.
+    // Only kill deletion detector, clean up lockfile, then exit.
     
     // Kill deletion detector
     if (deletionDetector && !deletionDetector.killed) {
@@ -314,8 +319,8 @@ async function startServices() {
       }, 2000);
     }
     
-    // Exit immediately — relay is detached and must keep running
-    log('Wrapper exiting (relay is detached and continues independently)', colors.cyan);
+    // Exit — relay is reparented to tilt's proc manager and keeps running
+    log('Wrapper exiting (relay continues under tilt)', colors.cyan);
     setTimeout(() => {
       removeLockFile();
       process.exit(0);
