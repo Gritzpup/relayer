@@ -105,14 +105,22 @@ function killExistingProcesses() {
     log('  Killing node relay processes...', colors.cyan);
     execSync("pkill -9 -f '/relayer/scripts/start-production' 2>/dev/null || true");
   } catch (e) { /* ignore */ }
-
+  // Kill deletion detector
   try {
     log('  Killing deletion detector...', colors.cyan);
     execSync("pkill -9 -f '/relayer/deletion_detector/.*bot' 2>/dev/null || true");
   } catch (e) { /* ignore */ }
 
+  // Wait for deletion detector to FULLY die and release DB locks before starting new one
+  // SQLite holds locks until the process exits and the handle is closed
+  execSync('sleep 2');
+
+  // Also clean up any stale session journal files that might cause locks
+  try {
+    execSync("rm -f /mnt/Storage/github/relayer/deletion_detector/sessions/*.session-journal 2>/dev/null || true");
+  } catch (e) { /* ignore */ }
+
   // Wait for processes to die
-  execSync('sleep 1');
 
   // Now check for any remaining processes
   try {
