@@ -95,29 +95,25 @@ async function isPortAvailable(port) {
 async function killExistingProcesses() {
   log('🔄 Checking for existing processes...', colors.yellow);
 
-  // Also kill any process holding port 15847 (orphaned relay)
+  // Kill any process holding port 15847 (orphaned relay) using fuser — works even during TIME_WAIT
+  // lsof -ti returns empty during TIME_WAIT, but fuser finds the socket owner
   try {
-    const { execSync } = require('child_process');
-    const portPid = execSync("lsof -ti :15847 2>/dev/null || true").toString().trim();
-    if (portPid) {
-      log(`  Killing process on port 15847 (PID ${portPid})...`, colors.cyan);
-      execSync(`kill -9 ${portPid} 2>/dev/null || true`);
-    }
+    log('  Killing any process on port 15847...', colors.cyan);
+    execSync('fuser -k 15847/tcp 2>/dev/null || true');
   } catch (e) { /* ignore */ }
 
   // Wait for orphaned relay to fully die and release port (TIME_WAIT can last ~60s)
-  log('  Waiting for port 15847 to be released (TIME_WAIT timeout)...', colors.cyan);
+  log('  Waiting for port 15847 to be released...', colors.cyan);
   for (let i = 0; i < 30; i++) {
     await new Promise(resolve => setTimeout(resolve, 2000));
-    const stillOnPort = execSync("lsof -ti :15847 2>/dev/null || true").toString().trim();
-    if (!stillOnPort) {
-      log(`  Port 15847 is now free (waited ${(i+1)*2}s)`, colors.cyan);
+    const portPid = execSync("lsof -ti :15847 2>/dev/null || true").toString().trim();
+    if (!portPid) {
+      log(`  Port 15847 is now free (waited ${(i+1)*2}s)`, colors.green);
       break;
     }
-    if (i === 29) {
-      log(`  WARNING: PID ${stillOnPort} still on port 15847 after 60s wait`, colors.red);
-    }
+    if (i === 0) log(`  Port still held by PID ${portPid}, waiting...`, colors.yellow);
   }
+
   // Kill deletion detector
   try {
     log('  Killing deletion detector...', colors.cyan);
