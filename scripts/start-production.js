@@ -95,11 +95,18 @@ async function isPortAvailable(port) {
 async function killExistingProcesses() {
   log('🔄 Checking for existing processes...', colors.yellow);
 
-  // Kill any process holding port 15847 (orphaned relay) using fuser — works even during TIME_WAIT
-  // lsof -ti returns empty during TIME_WAIT, but fuser finds the socket owner
+  // Kill any process holding port 15847 (orphaned relay) — uses lsof after fuser kills them
+  // Note: fuser -k is NOT used here because it would kill the new relay as collateral
+  // (deletion detector doesn't use port 15847, so fuser is unnecessary for it)
+  // The existing pkill patterns and port check handle orphaned relays adequately
   try {
-    log('  Killing any process on port 15847...', colors.cyan);
-    execSync('fuser -k 15847/tcp 2>/dev/null || true');
+    log('  Checking port 15847...', colors.cyan);
+    const portPid = execSync("lsof -ti :15847 2>/dev/null || true").toString().trim();
+    if (portPid) {
+      log(`  Port 15847 in use by PID ${portPid}, waiting...`, colors.yellow);
+    } else {
+      log('  Port 15847 is free', colors.green);
+    }
   } catch (e) { /* ignore */ }
 
   // Wait for orphaned relay to fully die and release port (TIME_WAIT can last ~60s)
