@@ -37,6 +37,11 @@ async function acquireLock(): Promise<boolean> {
     if (err.code === 'EEXIST') {
       // Lock file exists — check if the holding process is still alive
       const holder = parseInt(fs.readFileSync(LOCK_FILE, 'utf8').trim());
+      if (holder === parseInt(myPid)) {
+        // Our own PID in lock file — we crashed and restarted, safe to continue
+        console.log(`🔒 [LOCK] Our own PID ${myPid} in lock file (crashed instance), refreshing`);
+        return true;
+      }
       try {
         process.kill(holder, 0); // Check if process exists
         // Process is alive — verify it still owns the port (not just a zombie with same PID)
