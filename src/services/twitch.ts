@@ -286,7 +286,9 @@ export class TwitchService implements PlatformService {
 
   private async connectInternal(): Promise<void> {
     // Prevent duplicate connection attempts
-    if (this.isConnecting || this.status.connected) {
+    const state = this.client.readyState();
+    if (this.isConnecting || state === 'OPEN' || state === 'CONNECTING') {
+      logger.info("Twitch: Connection attempt skipped (isConnecting=" + this.isConnecting + ", state=" + state + ")");
       logger.debug('Twitch: Already connecting or connected, skipping connection attempt');
       return;
     }
@@ -578,7 +580,7 @@ export class TwitchService implements PlatformService {
   getStatus(): ServiceStatus {
     // Check actual WebSocket connection state instead of relying solely on status object
     // This ensures we accurately reflect disconnections that happen silently
-    const actualConnected = this.client.readyState() === 'OPEN';
+    const state = this.client.readyState(); const actualConnected = state === 'OPEN' || state === 'CONNECTING';
 
     return {
       ...this.status,

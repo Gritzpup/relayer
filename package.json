@@ -16,8 +16,8 @@
     "init-db": "tsx src/database/init.ts",
     "deletion-bot": "cd deletion_detector && python bot.py",
     "install-python": "cd deletion_detector && pip install -r requirements.txt",
-    "stop": "pkill -f 'tsx.*src/index.ts|deletion_detector/bot.py' || true",
-    "status": "ps aux | grep -E 'tsx.*src/index.ts|deletion_detector/bot.py' | grep -v grep || echo 'No relay processes running'"
+    "stop": "pkill -f '/relayer/.*src/index.ts|/relayer/deletion_detector/.*bot.py' || true",
+    "status": "ps aux | grep -E '/relayer/.*src/index.ts|/relayer/deletion_detector/.*bot.py' | grep -v grep || echo 'No relay processes running'"
   },
   "keywords": [
     "telegram",

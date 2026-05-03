@@ -61,7 +61,11 @@ export class MessageMapper {
         }
         
         if (sourcePlatform && replyToAuthor) {
-          replyToMapping = await this.findMappingIdByAuthorAndPlatform(replyToAuthor, sourcePlatform);
+          // Pass originalPlatform (Twitch) as requiredTargetPlatform so we only match
+          // mappings that were actually relayed to Twitch (i.e., from general channel).
+          // This prevents matching messages from non-general topics (tech, politics, etc.)
+          // that were never relayed to Twitch.
+          replyToMapping = await this.findMappingIdByAuthorAndPlatform(replyToAuthor, sourcePlatform, 300000, originalPlatform);
           if (replyToMapping) {
             // logger.info(`TWITCH REPLY: Found cross-platform reply mapping: ${replyToMapping} for ${replyToAuthor} from ${sourcePlatform}`);
           } else {
@@ -479,36 +483,39 @@ export class MessageMapper {
    * Find the mapping ID for a message by author and platform
    * Used for Twitch replies to cross-platform messages
    */
-  async findMappingIdByAuthorAndPlatform(author: string, sourcePlatform: Platform, timeWindow: number = 300000): Promise<string | undefined> {
+  async findMappingIdByAuthorAndPlatform(author: string, sourcePlatform: Platform, timeWindow: number = 300000, requiredTargetPlatform?: Platform): Promise<string | undefined> {
     const now = Date.now();
     const startTime = now - timeWindow;
-    
+
     // Scan for recent author keys
     const pattern = this.AUTHOR_PREFIX + author + ':' + sourcePlatform + ':*';
     const keys = await this.scanKeys(pattern);
-    
+
     // Find the most recent one within time window
-    let mostRecentMappingId: string | undefined;
-    let mostRecentTime = 0;
-    
-    for (const key of keys) {
-      const timestamp = parseInt(key.split(':').pop() || '0');
-      if (timestamp >= startTime && timestamp > mostRecentTime) {
-        const mappingId = await getMessageMapping(key);
-        if (mappingId) {
-          mostRecentMappingId = mappingId;
-          mostRecentTime = timestamp;
+    // Sort keys by timestamp descending so we check most recent first
+    const sortedKeys = keys
+      .map(key => ({ key, timestamp: parseInt(key.split(':').pop() || '0') }))
+      .filter(k => k.timestamp >= startTime)
+      .sort((a, b) => b.timestamp - a.timestamp);
+
+    for (const { key } of sortedKeys) {
+      const mappingId = await getMessageMapping(key);
+      if (mappingId) {
+        // If a target platform is required, verify the mapping was relayed there
+        if (requiredTargetPlatform) {
+          const mapping = await getMessageMapping(this.MAPPING_PREFIX + mappingId);
+          if (!mapping || !mapping.platformMessages || !mapping.platformMessages[requiredTargetPlatform]) {
+            logger.debug(`findMappingIdByAuthorAndPlatform: Skipping mapping ${mappingId} - no ${requiredTargetPlatform} platform message`);
+            continue;
+          }
         }
+        logger.debug(`findMappingIdByAuthorAndPlatform: Found ${mappingId} for ${author} from ${sourcePlatform}`);
+        return mappingId;
       }
     }
-    
-    if (mostRecentMappingId) {
-      logger.debug(`findMappingIdByAuthorAndPlatform: Found ${mostRecentMappingId} for ${author} from ${sourcePlatform}`);
-      return mostRecentMappingId;
-    }
-    
+
     // Fallback to database
-    const mapping = await messageDb.findMappingByAuthorAndPlatform(author, sourcePlatform);
+    const mapping = await messageDb.findMappingByAuthorAndPlatform(author, sourcePlatform, requiredTargetPlatform);
     logger.debug(`findMappingIdByAuthorAndPlatform: Database lookup for ${author} from ${sourcePlatform}, found: ${mapping?.id || 'none'}`);
     return mapping?.id;
   }

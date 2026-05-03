@@ -5,10 +5,10 @@ echo ""
 
 # Kill any existing processes
 echo "🧹 Cleaning up existing processes..."
-pkill -f "tsx watch" 2>/dev/null
-pkill -f "npm exec tsx" 2>/dev/null
-pkill -f "deletion_detector" 2>/dev/null
-pkill -f "start-with-deletion" 2>/dev/null
+pkill -f "/relayer/.*tsx watch" 2>/dev/null
+pkill -f "/relayer/.*npm exec tsx" 2>/dev/null
+pkill -f "/relayer/deletion_detector" 2>/dev/null
+pkill -f "/relayer/.*start-with-deletion" 2>/dev/null
 
 # Kill anything on port 3000
 lsof -ti:3000 | xargs -r kill -9 2>/dev/null

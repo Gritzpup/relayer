@@ -88,7 +88,7 @@ node test_telegram_deletion.js monitor
 
 2. **Check webhook is accessible**:
    ```bash
-   curl -X POST http://localhost:5847/api/deletion-webhook \
+   curl -X POST http://localhost:15847/api/deletion-webhook \
      -H "Content-Type: application/json" \
      -d '{"telegram_msg_id": 123, "mapping_id": "test"}'
    ```

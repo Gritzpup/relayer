@@ -27,7 +27,7 @@ logging.getLogger("pyrogram").setLevel(logging.WARNING)
 API_ID = os.getenv("TELEGRAM_API_ID")
 API_HASH = os.getenv("TELEGRAM_API_HASH")
 GROUP_ID = int(os.getenv("TELEGRAM_GROUP_ID", "0"))
-WEBHOOK_PORT = os.getenv("WEBHOOK_PORT", "5847")
+WEBHOOK_PORT = os.getenv("WEBHOOK_PORT", "15847")
 WEBHOOK_URL = f"http://localhost:{WEBHOOK_PORT}/api/deletion-webhook"
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "relay_messages.db")
 
@@ -67,10 +67,7 @@ def cleanup_old_cache_entries():
 def get_db():
     """Get database connection with proper timeout and WAL mode"""
     conn = sqlite3.connect(DB_PATH, timeout=30.0)
-    # Set WAL mode and busy timeout for better concurrency
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")  # 5 second busy timeout
-    conn.execute("PRAGMA synchronous=NORMAL")  # Better performance with WAL
+    conn.execute("PRAGMA busy_timeout=10000")
     return conn
 
 # Message handler - using decorator
@@ -109,52 +106,58 @@ async def handle_deleted_messages(client: Client, messages):
     logger.info(f"Deleted {len(messages)} messages: {[msg.id for msg in messages]}")
     logger.info(f"Detection method: {'Event' if client else 'Periodic Check'}")
     
-    db = get_db()
-    cursor = db.cursor()
-    
-    for msg in messages:
-        try:
-            msg_id = msg.id
-            logger.info(f"Processing deletion of message {msg_id}")
-            
-            # Check if we have this message in cache
-            if msg_id in message_cache:
-                logger.info(f"Message {msg_id} was in our cache")
-                del message_cache[msg_id]
-            
-            # Check database for mapping
-            cursor.execute(
-                "SELECT mapping_id FROM platform_messages WHERE platform = 'Telegram' AND message_id = ?",
-                (str(msg_id),)
-            )
-            result = cursor.fetchone()
-            
-            if result and result[0]:
-                mapping_id = result[0]
-                logger.info(f"Found mapping {mapping_id} for deleted message {msg_id}")
-                
-                # Notify main bot via webhook
-                async with aiohttp.ClientSession() as session:
-                    try:
-                        webhook_data = {
-                            "telegram_msg_id": msg_id,
-                            "mapping_id": mapping_id
-                        }
-                        logger.info(f"Sending webhook: {webhook_data}")
-                        async with session.post(WEBHOOK_URL, json=webhook_data) as resp:
-                            if resp.status == 200:
-                                logger.info(f"Successfully notified main bot")
-                            else:
-                                logger.error(f"Webhook failed: {resp.status}")
-                    except Exception as e:
-                        logger.error(f"Failed to notify main bot: {e}")
-            else:
-                logger.warning(f"No mapping found for message {msg_id}")
-                
-        except Exception as e:
-            logger.error(f"Error handling deleted message: {e}")
-    
-    db.close()
+    db = None
+    try:
+        db = get_db()
+        cursor = db.cursor()
+
+        for msg in messages:
+            try:
+                msg_id = msg.id
+                logger.info(f"Processing deletion of message {msg_id}")
+
+                # Check if we have this message in cache
+                if msg_id in message_cache:
+                    logger.info(f"Message {msg_id} was in our cache")
+                    del message_cache[msg_id]
+
+                # Check database for mapping
+                cursor.execute(
+                    "SELECT mapping_id FROM platform_messages WHERE platform = 'Telegram' AND message_id = ?",
+                    (str(msg_id),)
+                )
+                result = cursor.fetchone()
+
+                if result and result[0]:
+                    mapping_id = result[0]
+                    logger.info(f"Found mapping {mapping_id} for deleted message {msg_id}")
+
+                    # Notify main bot via webhook
+                    async with aiohttp.ClientSession() as session:
+                        try:
+                            webhook_data = {
+                                "telegram_msg_id": msg_id,
+                                "mapping_id": mapping_id
+                            }
+                            logger.info(f"Sending webhook: {webhook_data}")
+                            async with session.post(WEBHOOK_URL, json=webhook_data) as resp:
+                                if resp.status == 200:
+                                    logger.info(f"Successfully notified main bot")
+                                else:
+                                    logger.error(f"Webhook failed: {resp.status}")
+                        except Exception as e:
+                            logger.error(f"Failed to notify main bot: {e}")
+                else:
+                    logger.warning(f"No mapping found for message {msg_id}")
+
+            except Exception as e:
+                logger.error(f"Error handling deleted message: {e}")
+
+    except sqlite3.OperationalError as e:
+        logger.warning(f"Database locked in deletion handler, skipping: {e}")
+    finally:
+        if db:
+            db.close()
 
 async def update_heartbeat():
     """Update heartbeat file to show bot is alive"""

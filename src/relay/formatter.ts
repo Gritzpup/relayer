@@ -151,7 +151,7 @@ export class MessageFormatter {
         // Twitch: Use Unicode bold characters for platform tags and usernames
         const boldPlatformTag = this.toUnicodeBold(`[${message.platform}]`);
         const boldAuthor = this.toUnicodeBold(author);
-        const prefix = `${icon} ${boldPlatformTag} ${boldAuthor}`;
+        const prefix = `${boldAuthor}`;
         formattedContent = `${prefix}: ${formattedContent}`;
       } else if (targetPlatform === Platform.Kick || targetPlatform === Platform.YouTube) {
         // Kick/YouTube: Use simple formatting without emojis (limited rich formatting support)

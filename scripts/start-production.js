@@ -344,20 +344,12 @@ async function startServices() {
     process.exit(1);
   });
   
-  // Deletion detector exit — log warning but keep relay running
+  // Deletion detector exit — log warning but keep wrapper AND relay running
   // The relay core (Discord/Twitch relay) is more important than deletion detection
+  // IMPORTANT: do NOT call process.exit() here — the wrapper must keep running
+  // so the relay (its child) stays alive under tilt's proc manager
   deletionDetector.on('exit', (code, signal) => {
     log(`⚠️ Deletion detector exited with code ${code}, signal ${signal} — continuing without it`, colors.yellow);
-    // Don't kill the relay — deletion detection is auxiliary
-    // The core relay service should keep running
-  });
-  
-  // Keep the process running — the deletion detector exit is the only thing that matters
-  // Relay is detached and has its own lifecycle (may outlive the wrapper)
-  deletionDetector.on('exit', (code, signal) => {
-    log(`⚠️ Deletion detector exited with code ${code}, signal ${signal} — continuing without it`, colors.yellow);
-    // Don't kill the relay — deletion detection is auxiliary
-    // The core relay service should keep running
   });
 }
 

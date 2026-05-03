@@ -2,9 +2,9 @@
 echo "🔄 Restarting relay with new topic IDs..."
 
 # Kill existing processes
-pkill -f "node.*start-with-deletion-detector.js"
-pkill -f "python.*bot.py"
-pkill -f "node.*src/index.ts"
+pkill -f "/relayer/.*start-with-deletion-detector.js"
+pkill -f "/relayer/deletion_detector/.*bot.py"
+pkill -f "/relayer/.*src/index.ts"
 
 sleep 2
 

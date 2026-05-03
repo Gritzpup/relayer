@@ -68,7 +68,7 @@ TELEGRAM_API_ID=your_telegram_api_id
 TELEGRAM_API_HASH=your_telegram_api_hash
 
 # Webhook Configuration
-WEBHOOK_PORT=5847
+WEBHOOK_PORT=15847
 ```
 
 5. Configure channel mappings in `src/config/index.ts`:

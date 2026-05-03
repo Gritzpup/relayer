@@ -283,20 +283,33 @@ export class MessageDatabase {
     }
   }
 
-  async findMappingByAuthorAndPlatform(author: string, platform: string): Promise<any | null> {
+  async findMappingByAuthorAndPlatform(author: string, platform: string, requiredTargetPlatform?: Platform): Promise<any | null> {
     try {
-      const mapping = await this.db.get(`
-        SELECT * FROM message_mappings 
-        WHERE LOWER(author) = LOWER(?) 
-        AND original_platform = ?
-        ORDER BY timestamp DESC
-        LIMIT 1
-      `, [author, platform]);
-      
+      let mapping;
+      if (requiredTargetPlatform) {
+        // Only return mappings that were relayed to the required target platform
+        mapping = await this.db.get(`
+          SELECT m.* FROM message_mappings m
+          INNER JOIN platform_messages pm ON pm.mapping_id = m.id AND pm.platform = ?
+          WHERE LOWER(m.author) = LOWER(?)
+          AND m.original_platform = ?
+          ORDER BY m.timestamp DESC
+          LIMIT 1
+        `, [requiredTargetPlatform, author, platform]);
+      } else {
+        mapping = await this.db.get(`
+          SELECT * FROM message_mappings
+          WHERE LOWER(author) = LOWER(?)
+          AND original_platform = ?
+          ORDER BY timestamp DESC
+          LIMIT 1
+        `, [author, platform]);
+      }
+
       if (mapping) {
         return this.getMapping(mapping.id);
       }
-      
+
       return null;
     } catch (error) {
       logger.error('Failed to find mapping by author and platform:', error);

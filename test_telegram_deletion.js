@@ -12,7 +12,7 @@ const Database = require('better-sqlite3');
 const axios = require('axios');
 
 const db = new Database('relay_messages.db');
-const WEBHOOK_URL = 'http://localhost:5847/api/deletion-webhook';
+const WEBHOOK_URL = 'http://localhost:15847/api/deletion-webhook';
 
 console.log('=== Telegram Deletion Test Script ===\n');
 

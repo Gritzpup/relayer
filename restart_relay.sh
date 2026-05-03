@@ -4,7 +4,7 @@ echo "Restarting relay bot with Telegram fixes..."
 
 # Find and kill existing relay process
 echo "Stopping existing relay process..."
-pkill -f "node.*dist/index.js" || echo "No existing process found"
+pkill -f "/relayer/.*dist/index.js" || echo "No existing process found"
 
 # Wait a moment for cleanup
 sleep 2
