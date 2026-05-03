@@ -118,26 +118,25 @@ async function killExistingProcesses() {
     if (i === 0) log(`  Port still held by PID ${portPid}, waiting...`, colors.yellow);
   }
 
-  // Kill deletion detector
+  // Kill deletion detector + relay tsx processes (only relay-specific, not all tsx)
   try {
     log('  Killing deletion detector...', colors.cyan);
     execSync("pkill -9 -f '/relayer/deletion_detector/.*bot' 2>/dev/null || true");
+    log('  Killing orphaned relay tsx...', colors.cyan);
+    execSync("pkill -9 -f 'tsx.*src/index.*relay' 2>/dev/null || true");
   } catch (e) { /* ignore */ }
 
-  // Wait for deletion detector to FULLY die and release DB locks before starting new one
-  // SQLite holds locks until the process exits and the handle is closed
+  // Wait for processes to die and release locks
   execSync('sleep 2');
 
-  // Also clean up any stale session journal files that might cause locks
+  // Clean up any stale session journal files that might cause locks
   try {
     execSync("rm -f /mnt/Storage/github/relayer/deletion_detector/sessions/*.session-journal 2>/dev/null || true");
   } catch (e) { /* ignore */ }
 
-  // Wait for processes to die
-
-  // Now check for any remaining processes
+  // Now check for any remaining relay-specific processes only
   try {
-    const psOutput = execSync("ps aux | grep -E 'tsx.*src/index|node.*relay|deletion_detector.*bot' | grep -v grep | awk '{print $2}'", {
+    const psOutput = execSync("ps aux | grep -E '/mnt/Storage/github/relayer.*tsx.*src/index|/mnt/Storage/github/relayer.*deletion_detector.*bot' | grep -v grep | awk '{print $2}'", {
       encoding: 'utf8'
     }).trim();
 
