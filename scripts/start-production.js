@@ -269,12 +269,12 @@ async function startServices() {
   // This prevents database lock conflicts during startup
   await new Promise(resolve => setTimeout(resolve, 3000));
 
-  // Start main relay bot WITHOUT watch mode for production
-  // NOT detached — runs as normal child of wrapper so Tilt can track it
-  // When wrapper receives SIGTERM from tilt, it exits WITHOUT killing relay
-  // Relay gets reparented to tilt's proc manager and keeps running
+  // Start main relay bot as DETACHED child so it survives wrapper SIGTERM.
+  // The relay runs independently; wrapper monitors and can restart it.
+  // Relay PPID becomes 1 (init) or tilt's proc manager when wrapper truly exits.
   log('Starting relay service (production mode)...', colors.cyan);
   const relayBot = spawn('/home/ubuntubox/.npm-global/bin/tsx', ['src/index.ts'], {
+    detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
       ...process.env,
@@ -283,11 +283,15 @@ async function startServices() {
     cwd: __dirname + '/..'
   });
 
+  relayBot.unref(); // Detach from wrapper's lifecycle
   relayBot.stdout.on('data', (data) => process.stdout.write(`${colors.green}[Relay]${colors.reset} ${data}`));
   relayBot.stderr.on('data', (data) => process.stderr.write(`${colors.red}[Relay Error]${colors.reset} ${data}`));
   relayBot.on('error', (err) => log(`Relay failed to start: ${err.message}`, colors.red));
+  relayBot.on('exit', (code, signal) => {
+    log(`⚠️ Relay exited code=${code} signal=${signal} — will not restart (detached)`, colors.yellow);
+  });
 
-  log(`Relay started as PID ${relayBot.pid}`, colors.cyan);
+  log(`Relay started as detached PID ${relayBot.pid}`, colors.cyan);
 
   // Handle process termination
   const shutdown = (signal) => {

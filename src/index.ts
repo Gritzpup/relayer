@@ -246,9 +246,11 @@ function setupGracefulShutdown() {
     if (logger && logger.end) {
       logger.end();
     }
-    
+
     console.log('Shutdown complete');
-    process.exit(0);
+    // Do NOT call process.exit() here — let the process exit naturally.
+    // process.kill(process.pid) was removed — it caused tsx to forward SIGTERM
+    // to itself, creating a cascade where the relay parent dies alongside the relay.
   };
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
