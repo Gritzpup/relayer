@@ -137,13 +137,15 @@ async function main() {
 
     // Create server with SO_REUSEADDR to allow restart without TIME_WAIT delay
     const http = require('http');
+    const net = require('net');
     webhookServer = http.createServer(app);
+    // Enable address reuse on the underlying socket so we can rebind immediately after restart
     webhookServer.on('listening', () => {
       logger.info(`Webhook server listening on port ${PORT} (SO_REUSEADDR enabled)`);
     });
-    // Enable address reuse so we can rebind immediately after restart
     webhookServer.on('connection', (socket) => {
       socket.setNoDelay(true);
+      socket.setReuseAddr(); // Enable SO_REUSEADDR on this socket
     });
     webhookServer.listen(PORT);
     
