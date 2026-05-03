@@ -134,17 +134,18 @@ async function main() {
     });
     
     const PORT = process.env.WEBHOOK_PORT || 14002;
-    // console.log(`[STARTUP] Attempting to start webhook server on port ${PORT}...`);
-    
-    webhookServer = app.listen(PORT, () => {
-      logger.info(`Webhook server listening on port ${PORT}`);
-      // console.log(`[STARTUP] ✅ Webhook server successfully started on port ${PORT}`);
-    });
-    
-    // Add listening event
+
+    // Create server with SO_REUSEADDR to allow restart without TIME_WAIT delay
+    const http = require('http');
+    webhookServer = http.createServer(app);
     webhookServer.on('listening', () => {
-      // console.log(`[WEBHOOK] Server is now accepting connections on port ${PORT}`);
+      logger.info(`Webhook server listening on port ${PORT} (SO_REUSEADDR enabled)`);
     });
+    // Enable address reuse so we can rebind immediately after restart
+    webhookServer.on('connection', (socket) => {
+      socket.setNoDelay(true);
+    });
+    webhookServer.listen(PORT);
     
     // Handle server errors
     webhookServer.on('error', (error: any) => {
