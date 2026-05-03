@@ -263,26 +263,20 @@ async function startServices() {
 
   // Start main relay bot WITHOUT watch mode for production
   // Detached: survives wrapper being SIGTERM'd by tilt's proc manager
+  // IMPORTANT: no shell=true, no stdio pipes — relay is fully independent
+  // Using tsx directly (not npx) avoids shell intermediary that breaks detachment
   log('Starting relay service (production mode - detached, survives wrapper death)...', colors.cyan);
-  const relayBot = spawn('npx', ['tsx', 'src/index.ts'], {
-    stdio: ['ignore', 'pipe', 'pipe'],
-    shell: true,
+  const relayBot = spawn('/home/ubuntubox/.npm-global/bin/tsx', ['src/index.ts'], {
+    stdio: 'ignore',
     detached: true,
     env: {
       ...process.env,
       WEBHOOK_PORT: FIXED_PORT.toString()
-    }
+    },
+    cwd: __dirname + '/..'
   });
   relayBot.unref(); // Fully detach so wrapper exit doesn't affect relay
-
-  relayBot.stdout.on('data', (data) => {
-    process.stdout.write(data);
-    writeLog(`[relay-bot] ${data}`);
-  });
-  relayBot.stderr.on('data', (data) => {
-    process.stderr.write(data);
-    writeLog(`[relay-bot:stderr] ${data}`);
-  });
+  log(`Relay spawned as detached PID ${relayBot.pid} — it is now independent of this wrapper`, colors.cyan);
 
   // Handle process termination
   const shutdown = (signal) => {
