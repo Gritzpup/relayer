@@ -9,7 +9,7 @@ const DELETION_DETECTOR_DIR = path.join(__dirname, '..', 'deletion_detector');
 const SESSION_FILE = path.join(DELETION_DETECTOR_DIR, 'sessions', 'deletion_detector.session');
 const VENV_DIR = path.join(DELETION_DETECTOR_DIR, 'venv');
 const LOCK_FILE = path.join(__dirname, '..', '.relay.lock');
-const FIXED_PORT = process.env.WEBHOOK_PORT || 15847; // Use fixed port from .env
+const FIXED_PORT = process.env.WEBHOOK_PORT || 18421; // Isolated port for relayer only
 
 const LOG_DIR = path.join(__dirname, '..', 'logs');
 try { fs.mkdirSync(LOG_DIR, { recursive: true }); } catch (e) { /* ignore */ }
@@ -96,26 +96,23 @@ async function killExistingProcesses() {
   log('🔄 Checking for existing processes...', colors.yellow);
 
   // Kill any process holding port 15847 (orphaned relay) — uses lsof after fuser kills them
-  // Note: fuser -k is NOT used here because it would kill the new relay as collateral
-  // (deletion detector doesn't use port 15847, so fuser is unnecessary for it)
-  // The existing pkill patterns and port check handle orphaned relays adequately
+  // Kill any process holding the relay port (orphaned relay)
   try {
-    log('  Checking port 15847...', colors.cyan);
-    const portPid = execSync("lsof -ti :15847 2>/dev/null || true").toString().trim();
+    log(`  Checking port ${FIXED_PORT}...`, colors.cyan);
+    const portPid = execSync(`lsof -ti :${FIXED_PORT} 2>/dev/null || true`).toString().trim();
     if (portPid) {
-      log(`  Port 15847 in use by PID ${portPid}, waiting...`, colors.yellow);
+      log(`  Port ${FIXED_PORT} in use by PID ${portPid}, waiting...`, colors.yellow);
     } else {
-      log('  Port 15847 is free', colors.green);
+      log(`  Port ${FIXED_PORT} is free`, colors.green);
     }
-  } catch (e) { /* ignore */ }
+  } catch (e) { /* ignore lsof errors */ }
 
-  // Wait for orphaned relay to fully die and release port (TIME_WAIT can last ~60s)
-  log('  Waiting for port 15847 to be released...', colors.cyan);
+  // Wait for TIME_WAIT socket to clear
+  log(`  Waiting for port ${FIXED_PORT} to be released...`, colors.cyan);
   for (let i = 0; i < 30; i++) {
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    const portPid = execSync("lsof -ti :15847 2>/dev/null || true").toString().trim();
+    const portPid = execSync(`lsof -ti :${FIXED_PORT} 2>/dev/null || true`).toString().trim();
     if (!portPid) {
-      log(`  Port 15847 is now free (waited ${(i+1)*2}s)`, colors.green);
+      log(`  Port ${FIXED_PORT} is now free (waited ${(i+1)*2}s)`, colors.green);
       break;
     }
     if (i === 0) log(`  Port still held by PID ${portPid}, waiting...`, colors.yellow);
