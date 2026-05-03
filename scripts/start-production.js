@@ -311,8 +311,13 @@ async function startServices() {
   // Relay handles SIGTERM gracefully (no self-kill) so it survives wrapper death.
   // Relay becomes orphaned to tilt's proc manager when wrapper exits.
   log('Starting relay service (production mode)...', colors.cyan);
-  const relayBot = spawn('/home/ubuntubox/.npm-global/bin/tsx', ['src/index.ts'], {
-    stdio: ['ignore', 'pipe', 'pipe'],
+  // Use node directly with tsx loader — avoids tsx CLI preflight issues
+  const relayBot = spawn('/usr/bin/node', [
+    '--require', '/home/ubuntubox/.npm-global/lib/node_modules/tsx/dist/preflight.cjs',
+    '--import', 'file:///home/ubuntubox/.npm-global/lib/node_modules/tsx/dist/loader.mjs',
+    'src/index.ts'
+  ], {
+    stdio: ['pipe', 'pipe', 'pipe'],
     env: {
       ...process.env,
       WEBHOOK_PORT: FIXED_PORT.toString()
@@ -349,8 +354,12 @@ async function startServices() {
       log(`🔄 Restarting relay in 3s...`, colors.yellow);
       setTimeout(() => {
         try {
-          const newRelay = spawn('/home/ubuntubox/.npm-global/bin/tsx', ['src/index.ts'], {
-            stdio: ['ignore', 'pipe', 'pipe'],
+          const newRelay = spawn('/usr/bin/node', [
+            '--require', '/home/ubuntubox/.npm-global/lib/node_modules/tsx/dist/preflight.cjs',
+            '--import', 'file:///home/ubuntubox/.npm-global/lib/node_modules/tsx/dist/loader.mjs',
+            'src/index.ts'
+          ], {
+            stdio: ['pipe', 'pipe', 'pipe'],
             env: { ...process.env, WEBHOOK_PORT: FIXED_PORT.toString() },
             cwd: __dirname + '/..'
           });
