@@ -15,12 +15,38 @@ const LOG_DIR = path.join(__dirname, '..', 'logs');
 try { fs.mkdirSync(LOG_DIR, { recursive: true }); } catch (e) { /* ignore */ }
 const LOG_FILE = path.join(LOG_DIR, `relay-${new Date().toISOString().slice(0, 10)}.log`);
 const logStream = fs.createWriteStream(LOG_FILE, { flags: 'a' });
+const SIGKILL_TRACE_FILE = path.join(LOG_DIR, 'sigkill-trace.log');
 const stripAnsi = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, '');
 function writeLog(line) {
   try {
     const text = stripAnsi(line);
     logStream.write(`[${new Date().toISOString()}] ${text}${text.endsWith('\n') ? '' : '\n'}`);
   } catch (e) { /* ignore */ }
+}
+
+// Synchronous SIGKILL trace — writes directly to disk before any async work
+function traceSigkillToFile(targetPid, relayPid) {
+  try {
+    const entries = [];
+    let pid = targetPid || relayPid;
+    for (let i = 0; i < 5; i++) {
+      if (!pid || pid === '0' || pid === '1') break;
+      let comm = '', cmdline = '', ppid = '';
+      try {
+        const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+        const parts = stat.split(' ');
+        ppid = parts[3] || '';
+        comm = parts[1] || '';
+      } catch (e) { ppid = '?'; }
+      try { cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').replace(/\0/g, ' ').substring(0, 150); } catch (e) {}
+      entries.push({ pid, comm, ppid, cmdline });
+      pid = ppid;
+    }
+    const trace = `SIGKILL TRACE ${new Date().toISOString()} target=${targetPid} relay=${relayPid} chain=${JSON.stringify(entries)}\n`;
+    fs.writeFileSync(SIGKILL_TRACE_FILE, trace, { flag: 'a' });
+  } catch (e) {
+    fs.writeFileSync(SIGKILL_TRACE_FILE, `SIGKILL TRACE FAILED: ${e.message}\n`, { flag: 'a' });
+  }
 }
 
 // Colors for terminal output
@@ -298,20 +324,22 @@ async function startServices() {
   relayBot.stderr.on('data', (data) => process.stderr.write(`${colors.red}[Relay Error]${colors.reset} ${data}`));
   relayBot.on('error', (err) => log(`Relay failed to start: ${err.message}`, colors.red));
   relayBot.on('exit', (code, signal) => {
+    // Synchronous file trace FIRST — child's /proc still valid at this point
+    // relayBot.pid = tsx preflight, child tsx forked is what actually got killed
+    const tsxPid = relayBot.pid;
+    traceSigkillToFile(tsxPid, relayBot.pid);
+
     // SIGKILL tracing — find who killed the relay
     if (signal === 'SIGKILL') {
       try {
         const { execSync } = require('child_process');
-        // Find the actual tsx relay process (relayBot.pid is the preflight tsx, not the actual relay)
-        const relayPid = relayBot.pid;
-        const tsxPid = parseInt(execSync(`pgrep -P ${relayPid} 2>/dev/null || echo ""`).toString().trim());
-        const targetPid = tsxPid || relayPid;
+        const targetPid = tsxPid || relayBot.pid;
         const killerPpid = execSync(`cat /proc/${targetPid}/stat 2>/dev/null | awk '{print \$4}'`).toString().trim();
         const killerComm = killerPpid ? execSync(`cat /proc/${killerPpid}/comm 2>/dev/null`).toString().trim() : 'unknown';
         const killerCmd = killerPpid ? execSync(`cat /proc/${killerPpid}/cmdline 2>/dev/null | tr '\\\\0' ' '`).toString().trim().substring(0, 100) : '';
         log(`🚨 SIGKILL source: relay_pid=${targetPid} sender_ppid=${killerPpid} sender_comm="${killerComm}" sender_cmd="${killerCmd}"`, colors.red);
       } catch (e) {
-        log(`🚨 SIGKILL on relay PID ${relayBot.pid} (trace failed: ${e.message})`, colors.red);
+        log(`🚨 SIGKILL on relay PID ${relayBot.pid} (async trace failed: ${e.message})`, colors.red);
       }
     } else {
       log(`⚠️ Relay exited code=${code} signal=${signal}`, colors.red);
@@ -388,6 +416,10 @@ async function startServices() {
 
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
+  // Wrapper-level SIGKILL trace — write trace before exiting
+  process.on('SIGKILL', () => {
+    traceSigkillToFile(process.pid, process.pid);
+  });
   process.on('exit', removeLockFile);
   process.on('uncaughtException', (err) => {
     log(`Uncaught exception: ${err}`, colors.red);
