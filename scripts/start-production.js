@@ -92,19 +92,24 @@ async function isPortAvailable(port) {
   });
 }
 
-function killExistingProcesses() {
+async function killExistingProcesses() {
   log('🔄 Checking for existing processes...', colors.yellow);
 
-  // Kill by patterns first (more aggressive)
+  // Kill orphaned relay by port — the ONLY reliable identifier for orphaned relay
+  // (orphaned tsx has no /relayer/ path in cmdline, so cmdline patterns don't work)
   try {
-    log('  Killing tsx processes...', colors.cyan);
-    execSync("pkill -9 -f '/relayer/.*src/index' 2>/dev/null || true");
+    const { execSync } = require('child_process');
+    const portPid = execSync("lsof -ti :15847 2>/dev/null || true").toString().trim();
+    if (portPid) {
+      log(`  Killing orphaned relay on port 15847 (PID ${portPid})...`, colors.cyan);
+      execSync(`kill -9 ${portPid} 2>/dev/null || true`);
+    } else {
+      log('  No orphaned relay on port 15847', colors.cyan);
+    }
   } catch (e) { /* ignore */ }
 
-  try {
-    log('  Killing node relay processes...', colors.cyan);
-    execSync("pkill -9 -f '/relayer/scripts/start-production' 2>/dev/null || true");
-  } catch (e) { /* ignore */ }
+  // Wait for orphaned relay to fully die and release port
+  await new Promise(resolve => setTimeout(resolve, 500));
   // Kill deletion detector
   try {
     log('  Killing deletion detector...', colors.cyan);
