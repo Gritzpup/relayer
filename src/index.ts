@@ -36,20 +36,26 @@ async function acquireLock(): Promise<boolean> {
   } catch (err: any) {
     if (err.code === 'EEXIST') {
       // Lock file exists — check if the holding process is still alive
+      const holder = parseInt(fs.readFileSync(LOCK_FILE, 'utf8').trim());
       try {
-        const holder = parseInt(fs.readFileSync(LOCK_FILE, 'utf8').trim());
+        process.kill(holder, 0); // Check if process exists
+        // Process is alive — verify it still owns the port (not just a zombie with same PID)
+        const { execSync } = require('child_process');
         try {
-          process.kill(holder, 0); // Check if process exists
-          console.log(`🔒 [LOCK] Existing relayer holding lock (PID ${holder}), this instance (PID ${myPid}) will exit`);
-          return false;
-        } catch {
-          // Holder is dead but lock file wasn't cleaned up — steal the lock
-          fs.writeFileSync(LOCK_FILE, myPid);
-          console.log(`🔒 [LOCK] Previous holder (PID ${holder}) dead, acquired stale lock (PID ${myPid})`);
-          return true;
-        }
+          const currentHolder = execSync(`lsof -ti :15847 2>/dev/null || true`).toString().trim();
+          if (currentHolder && parseInt(currentHolder) !== holder) {
+            // Port is held by a DIFFERENT process — steal the lock
+            fs.writeFileSync(LOCK_FILE, myPid);
+            console.log(`🔒 [LOCK] Port held by PID ${currentHolder}, stole lock from dead PID ${holder} (PID ${myPid})`);
+            return true;
+          }
+        } catch { /* lsof failed, ignore */ }
+        console.log(`🔒 [LOCK] Existing relayer holding lock (PID ${holder}), this instance (PID ${myPid}) will exit`);
+        return false;
       } catch {
+        // Holder is dead — steal the lock
         fs.writeFileSync(LOCK_FILE, myPid);
+        console.log(`🔒 [LOCK] Previous holder (PID ${holder}) dead, acquired stale lock (PID ${myPid})`);
         return true;
       }
     }
