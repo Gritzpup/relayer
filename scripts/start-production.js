@@ -95,37 +95,29 @@ async function isPortAvailable(port) {
 async function killExistingProcesses() {
   log('🔄 Checking for existing processes...', colors.yellow);
 
-  // Kill orphaned relay by port — the ONLY reliable identifier for orphaned relay
-  // (orphaned tsx has no /relayer/ path in cmdline, so cmdline patterns don't work)
-  // NOTE: the PID from lsof is the process listening on the port — could be preflight
-  // or relay. Use kill -9 on the PID, then wait 2s, then check if port is still held.
-  // If still held, kill the process group to catch children.
+  // Also kill any process holding port 15847 (orphaned relay)
   try {
     const { execSync } = require('child_process');
     const portPid = execSync("lsof -ti :15847 2>/dev/null || true").toString().trim();
     if (portPid) {
-      log(`  Killing relay process on port 15847 (PID ${portPid})...`, colors.cyan);
+      log(`  Killing process on port 15847 (PID ${portPid})...`, colors.cyan);
       execSync(`kill -9 ${portPid} 2>/dev/null || true`);
-      // Wait for process and any children to fully die (SIGTERM cascade can take time)
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      const stillOnPort = execSync("lsof -ti :15847 2>/dev/null || true").toString().trim();
-      if (stillOnPort) {
-        log(`  Port still held by PID ${stillOnPort}, killing process group...`, colors.red);
-        execSync(`kill -9 -${stillOnPort} 2>/dev/null || true`); // kill group
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        const stillOnPort2 = execSync("lsof -ti :15847 2>/dev/null || true").toString().trim();
-        if (stillOnPort2) {
-          log(`  WARNING: PID ${stillOnPort2} still on port 15847 after group kill`, colors.red);
-        } else {
-          log('  Port 15847 is now free', colors.cyan);
-        }
-      } else {
-        log('  Port 15847 is now free', colors.cyan);
-      }
-    } else {
-      log('  No orphaned relay on port 15847', colors.cyan);
     }
   } catch (e) { /* ignore */ }
+
+  // Wait for orphaned relay to fully die and release port (TIME_WAIT can last ~60s)
+  log('  Waiting for port 15847 to be released (TIME_WAIT timeout)...', colors.cyan);
+  for (let i = 0; i < 30; i++) {
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    const stillOnPort = execSync("lsof -ti :15847 2>/dev/null || true").toString().trim();
+    if (!stillOnPort) {
+      log(`  Port 15847 is now free (waited ${(i+1)*2}s)`, colors.cyan);
+      break;
+    }
+    if (i === 29) {
+      log(`  WARNING: PID ${stillOnPort} still on port 15847 after 60s wait`, colors.red);
+    }
+  }
   // Kill deletion detector
   try {
     log('  Killing deletion detector...', colors.cyan);
