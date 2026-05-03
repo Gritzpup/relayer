@@ -298,7 +298,44 @@ async function startServices() {
   relayBot.stderr.on('data', (data) => process.stderr.write(`${colors.red}[Relay Error]${colors.reset} ${data}`));
   relayBot.on('error', (err) => log(`Relay failed to start: ${err.message}`, colors.red));
   relayBot.on('exit', (code, signal) => {
-    log(`⚠️ Relay exited code=${code} signal=${signal}`, colors.red);
+    // SIGKILL tracing — find who killed the relay
+    if (signal === 'SIGKILL') {
+      try {
+        const { execSync } = require('child_process');
+        // Find the actual tsx relay process (relayBot.pid is the preflight tsx, not the actual relay)
+        const relayPid = relayBot.pid;
+        const tsxPid = parseInt(execSync(`pgrep -P ${relayPid} 2>/dev/null || echo ""`).toString().trim());
+        const targetPid = tsxPid || relayPid;
+        const killerPpid = execSync(`cat /proc/${targetPid}/stat 2>/dev/null | awk '{print \$4}'`).toString().trim();
+        const killerComm = killerPpid ? execSync(`cat /proc/${killerPpid}/comm 2>/dev/null`).toString().trim() : 'unknown';
+        const killerCmd = killerPpid ? execSync(`cat /proc/${killerPpid}/cmdline 2>/dev/null | tr '\\\\0' ' '`).toString().trim().substring(0, 100) : '';
+        log(`🚨 SIGKILL source: relay_pid=${targetPid} sender_ppid=${killerPpid} sender_comm="${killerComm}" sender_cmd="${killerCmd}"`, colors.red);
+      } catch (e) {
+        log(`🚨 SIGKILL on relay PID ${relayBot.pid} (trace failed: ${e.message})`, colors.red);
+      }
+    } else {
+      log(`⚠️ Relay exited code=${code} signal=${signal}`, colors.red);
+    }
+    // Auto-restart relay if it dies unexpectedly (except SIGKILL which indicates external kill)
+    if (signal !== 'SIGKILL' && !relayBot.killed) {
+      log(`🔄 Restarting relay in 3s...`, colors.yellow);
+      setTimeout(() => {
+        try {
+          const newRelay = spawn('/home/ubuntubox/.npm-global/bin/tsx', ['src/index.ts'], {
+            stdio: ['ignore', 'pipe', 'pipe'],
+            env: { ...process.env, WEBHOOK_PORT: FIXED_PORT.toString() },
+            cwd: __dirname + '/..'
+          });
+          newRelay.stdout.on('data', (data) => process.stdout.write(`${colors.green}[Relay]${colors.reset} ${data}`));
+          newRelay.stderr.on('data', (data) => process.stderr.write(`${colors.red}[Relay Error]${colors.reset} ${data}`));
+          newRelay.on('exit', (c, s) => relayBot.emit('exit', c, s));
+          relayBot = newRelay;
+          log(`🔄 Relay restarted as PID ${newRelay.pid}`, colors.green);
+        } catch (e) {
+          log(`❌ Relay restart failed: ${e.message}`, colors.red);
+        }
+      }, 3000);
+    }
   });
 
   log(`Relay started as detached PID ${relayBot.pid}`, colors.cyan);
