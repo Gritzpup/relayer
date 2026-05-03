@@ -65,8 +65,11 @@ def cleanup_old_cache_entries():
         logger.info(f"Cleaned up {len(entries_to_remove)} old cache entries")
 
 def get_db():
-    """Get database connection with proper timeout and WAL mode"""
-    conn = sqlite3.connect(DB_PATH, timeout=30.0)
+    """Get database connection with proper timeout and WAL mode for concurrent access"""
+    # Use URI with mode=ro to open read-only without blocking writers
+    # Also enable WAL so we can read from the WAL even while relay is writing
+    uri = f"file:{DB_PATH}?mode=ro&immutable=1"
+    conn = sqlite3.connect(uri, timeout=30.0, uri=True)
     conn.execute("PRAGMA busy_timeout=10000")
     return conn
 
