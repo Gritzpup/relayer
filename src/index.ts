@@ -222,9 +222,6 @@ function setupGracefulShutdown() {
     }
     console.log(`Received ${signal}, shutting down gracefully...`);
     
-    // 🔥 MEMORY LEAK FIX: Stop periodic instance checking
-    stopPeriodicInstanceCheck();
-    
     // Stop memory monitoring
     memoryMonitor.stop();
     
