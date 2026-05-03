@@ -106,8 +106,8 @@ async function killExistingProcesses() {
     if (portPid) {
       log(`  Killing relay process on port 15847 (PID ${portPid})...`, colors.cyan);
       execSync(`kill -9 ${portPid} 2>/dev/null || true`);
-      // Wait for process and any children to fully die
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Wait for process and any children to fully die (SIGTERM cascade can take time)
+      await new Promise(resolve => setTimeout(resolve, 5000));
       const stillOnPort = execSync("lsof -ti :15847 2>/dev/null || true").toString().trim();
       if (stillOnPort) {
         log(`  Port still held by PID ${stillOnPort}, killing process group...`, colors.red);
