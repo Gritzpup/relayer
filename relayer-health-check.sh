@@ -4,12 +4,11 @@
 # Returns 0 (success) when relayer is healthy or degraded (core services working)
 # Core services: Discord and Telegram relay functionality
 
-RESPONSE=$(curl -s http://localhost:15847/health)
-STATUS=$(echo "$RESPONSE" | jq -r '.status' 2>/dev/null)
+RESPONSE=$(curl -s http://localhost:18421/health)
 
-# Pass if status is 'healthy' or 'degraded' (means core services are working)
-# Only fail on 'unhealthy' or 'error'
-if [ "$STATUS" = "healthy" ] || [ "$STATUS" = "degraded" ]; then
+# Pass if response contains 'healthy' or 'degraded' (means core services are working)
+# Only fail if neither is found
+if echo "$RESPONSE" | grep -qE '"status"\s*:\s*"(healthy|degraded)"'; then
     exit 0
 else
     exit 1
