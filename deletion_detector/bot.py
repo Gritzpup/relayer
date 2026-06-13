@@ -66,9 +66,11 @@ def cleanup_old_cache_entries():
 
 def get_db():
     """Get database connection with proper timeout and WAL mode for concurrent access"""
-    # Use URI with mode=ro to open read-only without blocking writers
-    # Also enable WAL so we can read from the WAL even while relay is writing
-    uri = f"file:{DB_PATH}?mode=ro&immutable=1"
+    # Use URI with mode=ro to open read-only without blocking writers.
+    # NOTE: do NOT use immutable=1 here — it makes SQLite ignore the -wal file,
+    # so recently-relayed (un-checkpointed) mappings are invisible and freshly
+    # deleted messages return "No mapping found". mode=ro still reads the WAL.
+    uri = f"file:{DB_PATH}?mode=ro"
     conn = sqlite3.connect(uri, timeout=30.0, uri=True)
     conn.execute("PRAGMA busy_timeout=10000")
     return conn

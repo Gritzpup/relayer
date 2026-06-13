@@ -1,4 +1,5 @@
 import { Client, GatewayIntentBits, TextChannel, Message, PartialMessage, AttachmentBuilder, EmbedBuilder, Partials, ChannelType } from 'discord.js';
+import axios from 'axios';
 import { config, channelMappings } from '../config';
 import { Platform, RelayMessage, MessageHandler, DeleteHandler, PlatformService, ServiceStatus, Attachment } from '../types';
 import { logger, logPlatformMessage, logError } from '../utils/logger';
@@ -281,12 +282,26 @@ export class DiscordService implements PlatformService {
             .setThumbnail(att.url)
             .setColor(0x36393f); // Discord dark theme background color to blend in
           embeds.push(embed);
-        } else {
-          // Handle other attachments normally
-          if (att.url) {
+        } else if (att.data) {
+          regularAttachments.push(new AttachmentBuilder(att.data, { name: att.filename || 'attachment' }));
+        } else if (att.url) {
+          // Download the file ourselves and upload the bytes to Discord, instead of
+          // passing the URL and letting discord.js fetch it. Server-side fetches of
+          // Telegram file URLs (api.telegram.org/file/bot.../...) intermittently throw
+          // "fetch failed" inside discord.js, which drops the ENTIRE message (text+image).
+          const name = att.filename || att.url.split('?')[0].split('/').pop() || 'attachment';
+          try {
+            const resp = await axios.get(att.url, {
+              responseType: 'arraybuffer',
+              timeout: 20000,
+              maxContentLength: 50 * 1024 * 1024,
+            });
+            regularAttachments.push(new AttachmentBuilder(Buffer.from(resp.data), { name }));
+          } catch (error) {
+            // Fall back to the previous behaviour (let Discord fetch the URL) so a
+            // download hiccup degrades to the old path rather than a hard failure.
+            logger.warn(`Discord: failed to pre-download attachment ${att.url}, falling back to URL: ${(error as Error).message}`);
             regularAttachments.push(att.url);
-          } else if (att.data) {
-            regularAttachments.push(new AttachmentBuilder(att.data, { name: att.filename || 'attachment' }));
           }
         }
       }

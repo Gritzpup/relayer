@@ -19,7 +19,8 @@ export class TwitchService implements PlatformService {
   platform = Platform.Twitch;
   private client: tmi.Client;
   private messageHandler?: MessageHandler;
-  // @ts-ignore - Kept for interface consistency, Twitch doesn't support deletion detection yet
+  // Fired (via the tmi.js 'messagedeleted' event) when a mod/bot removes a message
+  // on Twitch, so the deletion propagates to the other platforms.
   private _deleteHandler?: DeleteHandler;
   private reconnectManager: ReconnectManager;
   private isConnecting: boolean = false;
@@ -211,6 +212,33 @@ export class TwitchService implements PlatformService {
     this.client.on('part', (channel: string, _username: string, self: boolean) => {
       if (self) {
         logger.warn(`Twitch bot left channel: ${channel}`);
+      }
+    });
+
+    // Detect when a moderator/bot removes a single message on Twitch (IRC CLEARMSG)
+    // and propagate that deletion to the other platforms (Telegram, Discord, ...).
+    // tmi.js exposes the deleted message's id via userstate['target-msg-id'], which
+    // matches the id we stored as originalMessageId when the message was relayed.
+    this.client.on('messagedeleted', async (channel: string, username: string, _deletedMessage: string, userstate: tmi.DeleteUserstate) => {
+      if (channel !== `#${config.twitch.channel}`) return;
+
+      const targetMsgId = userstate['target-msg-id'];
+      if (!targetMsgId) {
+        logger.warn(`Twitch messagedeleted event without target-msg-id (user: ${username})`);
+        return;
+      }
+
+      logger.info(`TWITCH DELETE DETECTED: message ${targetMsgId} from ${username} removed on Twitch — propagating`);
+
+      if (this._deleteHandler) {
+        try {
+          // isAdminDeletion = true: a moderator/bot removed this message
+          await this._deleteHandler(Platform.Twitch, targetMsgId, true);
+        } catch (error) {
+          logError(error as Error, 'Twitch messagedeleted handler');
+        }
+      } else {
+        logger.warn('No delete handler set for Twitch — cannot propagate deletion');
       }
     });
 
