@@ -215,32 +215,13 @@ export class TwitchService implements PlatformService {
       }
     });
 
-    // Detect when a moderator/bot removes a single message on Twitch (IRC CLEARMSG)
-    // and propagate that deletion to the other platforms (Telegram, Discord, ...).
-    // tmi.js exposes the deleted message's id via userstate['target-msg-id'], which
-    // matches the id we stored as originalMessageId when the message was relayed.
-    this.client.on('messagedeleted', async (channel: string, username: string, _deletedMessage: string, userstate: tmi.DeleteUserstate) => {
-      if (channel !== `#${config.twitch.channel}`) return;
-
-      const targetMsgId = userstate['target-msg-id'];
-      if (!targetMsgId) {
-        logger.warn(`Twitch messagedeleted event without target-msg-id (user: ${username})`);
-        return;
-      }
-
-      logger.info(`TWITCH DELETE DETECTED: message ${targetMsgId} from ${username} removed on Twitch — propagating`);
-
-      if (this._deleteHandler) {
-        try {
-          // isAdminDeletion = true: a moderator/bot removed this message
-          await this._deleteHandler(Platform.Twitch, targetMsgId, true);
-        } catch (error) {
-          logError(error as Error, 'Twitch messagedeleted handler');
-        }
-      } else {
-        logger.warn('No delete handler set for Twitch — cannot propagate deletion');
-      }
-    });
+    // NOTE: Twitch -> other-platforms deletion propagation is intentionally DISABLED.
+    // A previous 'messagedeleted' (CLEARMSG) listener here propagated *any* Twitch
+    // single-message removal back to the original message on Telegram/Discord. But
+    // Twitch removes messages for many non-spam reasons (automod on relayed content,
+    // mods tidying relayed messages, dropped/duplicate relays), so it was deleting
+    // legitimate users' Telegram messages. Do NOT re-enable without scoping it to
+    // genuine moderation of original (non-relayed) Twitch messages only.
 
     // Note: tmi.js doesn't expose a general error event - errors are handled through disconnected event
   }
