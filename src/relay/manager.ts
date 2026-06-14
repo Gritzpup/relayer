@@ -18,6 +18,7 @@ import { logger, logError } from '../utils/logger';
 import { messageDb } from '../database/db';
 import { initializeRedis, closeRedis } from '../services/redis';
 import { redisEvents, DeletionEvent } from './redisEvents';
+import { isFollowBotSpam } from './spamFilter';
 
 export class RelayManager {
   services: Map<Platform, PlatformService> = new Map(); // Made public for webhook access
@@ -87,10 +88,11 @@ export class RelayManager {
       console.log('[RELAY] ✅ Twitch service initialized');
     }
 
-    console.log('[RELAY] Connecting to all platforms...');
+    console.log('[RELAY] Connecting to all platforms in parallel...');
     const services = Array.from(this.services.values());
     
-    for (const service of services) {
+    // Connect to all platforms in parallel
+    const connectionPromises = services.map(async (service) => {
       console.log(`[RELAY] Connecting to ${service.platform}...`);
       try {
         await service.connect();
@@ -99,10 +101,17 @@ export class RelayManager {
         console.error(`[RELAY] ❌ Failed to connect to ${service.platform}:`, error);
         logError(error as Error, `Failed to connect ${service.platform}`);
       }
-    }
+    });
+    
+    // Wait for all connection attempts to complete (with a total timeout)
+    await Promise.race([
+      Promise.all(connectionPromises),
+      new Promise(resolve => setTimeout(resolve, 30000)) // 30s max wait for initial connections
+    ]);
     
     logger.info('Relay manager started successfully');
-    console.log('[RELAY] ✅ All connections established');
+    console.log('[RELAY] ✅ All initial connection attempts completed');
+
     this.logStatus();
 
     // Log connection status for each service
@@ -209,10 +218,18 @@ export class RelayManager {
   }
 
   private async handleMessage(message: RelayMessage): Promise<void> {
+    // Drop known Twitch follow/view-bot spam at the source, before it is mapped
+    // or relayed anywhere. This only matches Twitch-originated spam and never
+    // deletes anything — the message is simply not forwarded.
+    if (isFollowBotSpam(message)) {
+      logger.warn(`[SPAM BLOCKED] Not relaying Twitch follow-bot spam from ${message.author}: "${(message.content || '').slice(0, 100)}"`);
+      return;
+    }
+
     // Always track the message, even if we're not relaying it
     // This allows us to handle replies to native messages
     // logger.info(`[CHANNEL DEBUG] Message from ${message.platform} channel: ${message.channelName} (ID: ${message.channelId})`);
-    
+
     if (message.replyTo) {
       logger.debug(`Processing message ${message.id} from ${message.platform} which is a reply to ${message.replyTo.messageId}`);
       if (message.replyTo.platform) {
