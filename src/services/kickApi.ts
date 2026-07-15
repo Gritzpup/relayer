@@ -156,13 +156,11 @@ export class KickAPI {
     try {
       let accessToken = await kickTokenManager.getAccessToken();
 
-      // broadcaster_user_id seems to be determined from the access token
-      // Omit it from the request body - including it causes "Invalid request" errors
-      const requestBody = {
+      // Include webhook URL in subscription request
+      const requestBody: any = {
         events,
-        method: 'webhook'
-        // Note: broadcaster_user_id is determined from the access token
-        // Note: webhook_url is configured in Kick dashboard, not in request body
+        method: 'webhook',
+        webhook_url: webhookUrl
       };
 
       logger.debug(`Kick subscription request body: ${JSON.stringify(requestBody)}`);
@@ -244,6 +242,34 @@ export class KickAPI {
       return true;
     } catch (error) {
       logger.error('Failed to unsubscribe from Kick event:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Delete a chat message (requires moderation privileges)
+   */
+  async deleteChatMessage(messageId: string): Promise<boolean> {
+    try {
+      const accessToken = await kickTokenManager.getAccessToken();
+      
+      await axios.delete(
+        `https://api.kick.com/public/v1/chat/${messageId}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+          },
+          timeout: 10000
+        }
+      );
+      
+      logger.info(`[KICK API] Deleted message: ${messageId}`);
+      return true;
+    } catch (error) {
+      logger.error('Failed to delete Kick message:', error);
+      if (axios.isAxiosError(error)) {
+        logger.error(`Kick API error: ${error.response?.status} - ${JSON.stringify(error.response?.data)}`);
+      }
       return false;
     }
   }

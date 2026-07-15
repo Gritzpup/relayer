@@ -407,19 +407,21 @@ export class RelayManager {
         const formattedContent = this.formatter.formatForPlatform(message, targetPlatform, formatterReplyInfo);
         // logger.info(`Formatted content for ${targetPlatform}: "${formattedContent}"`);
         
-        // Check if target is Twitch (string comparison to avoid TS narrowing issues)
-        if (targetPlatform.toString() === Platform.Twitch.toString()) {
-          // Twitch doesn't support edits, so try to delete old message first
+        // Check if target is Twitch or Kick (string comparison to avoid TS narrowing issues)
+        // Twitch and Kick don't support native edits, so delete old message + send new
+        if (targetPlatform.toString() === Platform.Twitch.toString() ||
+            targetPlatform.toString() === Platform.Kick.toString()) {
+          // Twitch/Kick don't support edits, so try to delete old message first
           let deleteSuccess = false;
           try {
             deleteSuccess = await service.deleteMessage(messageId);
             if (deleteSuccess) {
-              logger.info(`Deleted old Twitch message ${messageId} before sending edit`);
+              logger.info(`Deleted old ${targetPlatform} message ${messageId} before sending edit`);
             } else {
-              logger.warn(`Could not delete old Twitch message ${messageId} - bot needs moderator permissions`);
+              logger.warn(`Could not delete old ${targetPlatform} message ${messageId} - bot needs moderator permissions`);
             }
           } catch (error) {
-            logger.warn(`Error deleting old Twitch message: ${error}`);
+            logger.warn(`Error deleting old ${targetPlatform} message: ${error}`);
           }
           
           // Format message based on whether we could delete the old one
@@ -438,9 +440,9 @@ export class RelayManager {
           // Update the mapping with the new Twitch message ID
           if (newMessageId) {
             await this.messageMapper.updatePlatformMessage(mapping.id, targetPlatform, newMessageId);
-            logger.info(`Sent edited message to Twitch with new ID ${newMessageId}`);
+            logger.info(`Sent edited message to ${targetPlatform} with new ID ${newMessageId}`);
           } else {
-            logger.info(`Sent edited message to Twitch`);
+            logger.info(`Sent edited message to ${targetPlatform}`);
           }
         } else {
           // Discord and Telegram support native edits

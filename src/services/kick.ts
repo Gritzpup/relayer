@@ -423,15 +423,31 @@ export class KickService implements PlatformService {
   }
 
   async editMessage(messageId: string, newContent: string): Promise<boolean> {
-    // Kick doesn't support message editing for regular users
-    logger.debug('Kick does not support message editing');
+    // Kick doesn't support native message editing
+    // Follow Twitch pattern: delete old message, then send new one
+    // The relay manager handles the delete+resend flow via handleEdit
+    logger.debug('Kick editMessage called - relay manager will handle delete+resend');
     return false;
   }
 
   async deleteMessage(messageId: string, channelId?: string): Promise<boolean> {
-    // Kick message deletion would require moderator permissions and proper API auth
-    logger.debug('Kick message deletion not implemented');
-    return false;
+    if (!this.status.connected) {
+      logger.warn('Cannot delete Kick message: Not connected');
+      return false;
+    }
+
+    try {
+      const success = await this.api.deleteChatMessage(messageId);
+      if (success) {
+        logger.info(`Successfully deleted Kick message: ${messageId}`);
+        return true;
+      }
+      logger.warn(`Failed to delete Kick message: ${messageId}`);
+      return false;
+    } catch (error) {
+      logError(error as Error, 'Failed to delete message from Kick');
+      return false;
+    }
   }
 
   onMessage(handler: MessageHandler): void {
