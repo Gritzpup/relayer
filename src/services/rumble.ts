@@ -227,10 +227,12 @@ export class RumbleService implements PlatformService {
       const messageText = messageData.text || '';
       const author = messageData.username || 'Unknown';
 
-      // Check if this is a relayed message - messages that START with platform prefix
-      // This prevents the bot from seeing its own relayed messages and echoing them back
-      const isRelayedMessage = /^\[?(Telegram|Discord|Twitch|Kick|YouTube|Rumble|𝐓𝐞𝐥𝐞𝐠𝐫𝐚𝐦|𝐃𝐢𝐬𝐜𝐨𝐫𝐝|𝐓𝐰𝐢𝐭𝐜𝐡|𝐊𝐢𝐜𝐤|𝐘𝐨𝐮𝐓𝐮𝐛𝐞|𝐑𝐮𝐦𝐛𝐥𝐞)\]/.test(messageText) ||
-        /^(🔵|🟣|🔴|🟢|✈️|🎮|💬|🎬)/.test(messageText);
+      // Check if this is a relayed message - messages that contain platform prefix tags.
+      // Puppeteer keyboard.type() may strip emoji characters, leaving a leading space
+      // from the formatter's "🟣 [Telegram]" → " [Telegram]". trimStart() handles this.
+      const trimmed = messageText.trimStart();
+      const isRelayedMessage = /^\[(Telegram|Discord|Twitch|Kick|YouTube|Rumble|𝐓𝐞𝐥𝐞𝐠𝐫𝐚𝐦|𝐃𝐢𝐬𝐜𝐨𝐫𝐝|𝐓𝐰𝐢𝐭𝐜𝐡|𝐊𝐢𝐜𝐤|𝐘𝐨𝐮𝐓𝐮𝐛𝐞|𝐑𝐮𝐦𝐛𝐥𝐞)\]/.test(trimmed) ||
+        /^(🔵|🟣|🔴|🟢|✈️|🎮|💬|🎬)/.test(trimmed);
 
       if (isRelayedMessage) {
         logger.debug(`Rumble: Skipping relayed message: "${messageText.substring(0, 50)}..."`);
