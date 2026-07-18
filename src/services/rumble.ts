@@ -306,15 +306,19 @@ export class RumbleService implements PlatformService {
         }
       }
 
-      logger.info(`[RUMBLE] Sending message via browser automation: "${messageContent.substring(0, 50)}..."`);
+      const chatId = config.rumble?.chatId;
+      logger.info(`[RUMBLE] Sending message via ${chatId ? 'authenticated API' : 'browser automation'}: "${messageContent.substring(0, 50)}..."`);
 
-      // Use Puppeteer browser automation to type message into Rumble chat
-      const success = await rumbleCookieManager.sendMessageViaBrowser(messageContent, streamId);
+      // A livestream id (for example 7aq032) is not the numeric chat id used by
+      // /chat/api/chat/:chatId/message. Prefer the configured numeric chat id.
+      const success = chatId
+        ? await rumbleCookieManager.sendMessageViaApi(messageContent, chatId, streamId)
+        : await rumbleCookieManager.sendMessageViaBrowser(messageContent, streamId);
 
       if (success) {
         this.status.messagesSent++;
         logPlatformMessage('Rumble', 'out', messageContent, 'bot');
-        logger.info('[RUMBLE] Message sent successfully via browser');
+        logger.info('[RUMBLE] Message sent successfully');
         return `rumble-${Date.now()}`;
       }
 

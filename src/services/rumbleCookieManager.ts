@@ -2,6 +2,7 @@ import axios from 'axios';
 import fs from 'fs/promises';
 import path from 'path';
 import logger from '../utils/logger';
+import crypto from 'crypto';
 
 interface RumbleCookieData {
   cookies: string; // Cookie header string
@@ -17,6 +18,7 @@ export class RumbleCookieManager {
   private chatBrowser: any = null;
   private chatPage: any = null;
   private chatInitialized: boolean = false;
+  private sendQueue: Promise<void> = Promise.resolve();
 
   constructor() {
     this.cookieFile = path.join(process.cwd(), 'rumble_cookies.json');
@@ -215,6 +217,68 @@ export class RumbleCookieManager {
       this.chatBrowser = null;
     }
     logger.info('[RUMBLE BROWSER] Chat browser closed');
+  }
+
+  /**
+   * Send through the same authenticated endpoint used by rumble.com itself.
+   * Running fetch inside the logged-in page preserves Cloudflare/browser state.
+   */
+  async sendMessageViaApi(message: string, chatId: string, streamId: string): Promise<boolean> {
+    const previousSend = this.sendQueue;
+    let releaseSend!: () => void;
+    this.sendQueue = new Promise<void>(resolve => { releaseSend = resolve; });
+    await previousSend;
+
+    try {
+      if (!/^\d+$/.test(chatId)) {
+        logger.error(`[RUMBLE API] Invalid numeric chat id: ${chatId}`);
+        return false;
+      }
+
+      if (!this.chatInitialized || !this.chatPage || this.chatPage.isClosed()) {
+        const ok = await this.initializeChatBrowser(streamId);
+        if (!ok) return false;
+      }
+
+      const requestId = crypto.randomBytes(32).toString('base64url');
+      const result = await this.chatPage.evaluate(
+        async ({ endpoint, requestId, message }: { endpoint: string; requestId: string; message: string }) => {
+          const response = await fetch(endpoint, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { accept: '*/*', 'content-type': 'application/json' },
+            body: JSON.stringify({
+              data: {
+                request_id: requestId,
+                message: { text: message },
+                rant: null,
+                channel_id: null,
+              },
+            }),
+          });
+
+          return { ok: response.ok, status: response.status, body: await response.text() };
+        },
+        {
+          endpoint: `https://web7.rumble.com/chat/api/chat/${chatId}/message`,
+          requestId,
+          message,
+        }
+      );
+
+      if (!result.ok) {
+        logger.error(`[RUMBLE API] Send failed (${result.status}): ${result.body.substring(0, 500)}`);
+        return false;
+      }
+
+      logger.info(`[RUMBLE API] Message accepted (${result.status})`);
+      return true;
+    } catch (error: any) {
+      logger.error('[RUMBLE API] Failed to send message:', error.message);
+      return false;
+    } finally {
+      releaseSend();
+    }
   }
 
   /**

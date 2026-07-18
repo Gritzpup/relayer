@@ -299,6 +299,7 @@ export class MessageFormatter {
       [Platform.Twitch]: 10000, // Twitch service handles splitting, so we allow longer messages
       [Platform.Kick]: 500, // Kick has a 500 character limit for chat messages
       [Platform.YouTube]: 200, // YouTube live chat has a 200 character limit
+      [Platform.Rumble]: 500,
     };
 
     const maxLength = maxLengths[platform];

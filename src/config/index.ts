@@ -39,6 +39,7 @@ export interface Config {
   rumble?: {
     apiKey: string;
     pollingInterval?: number;
+    chatId?: string;
   };
   relay: {
     prefixEnabled: boolean;
@@ -184,6 +185,7 @@ export const config: Config = {
   rumble: process.env.RUMBLE_API_KEY ? {
     apiKey: getEnvVar('RUMBLE_API_KEY'),
     pollingInterval: getEnvNumber('RUMBLE_POLLING_INTERVAL', 5000),
+    chatId: process.env.RUMBLE_CHAT_ID,
   } : undefined,
   relay: {
     prefixEnabled: getEnvBool('RELAY_PREFIX_ENABLED', true),
