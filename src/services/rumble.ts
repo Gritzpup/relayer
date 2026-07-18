@@ -32,6 +32,7 @@ export class RumbleService implements PlatformService {
   private isConnecting: boolean = false;
   private pollingInterval: NodeJS.Timeout | null = null;
   private processedMessageIds: Set<string> = new Set();
+  private currentStreamId: string | null = null; // Track to detect stream transitions
   private apiKey: string;
   private apiUrl: string;
   private status: ServiceStatus = {
@@ -111,6 +112,8 @@ export class RumbleService implements PlatformService {
 
       // Initialize browser-based chat for sending messages (awaited to prevent race)
       if (liveStream?.id) {
+        this.currentStreamId = liveStream.id;
+        await rumbleCookieManager.setChatId(liveStream.id);
         logger.info('Initializing Rumble chat browser for outgoing messages...');
         const browserReady = await rumbleCookieManager.initializeChatBrowser(liveStream.id);
         if (browserReady) {
@@ -154,7 +157,29 @@ export class RumbleService implements PlatformService {
             this.processedMessageIds.clear();
             isFirstPoll = true; // Reset for next stream
           }
+          this.currentStreamId = null;
           return;
+        }
+
+        // Detect stream transition (new stream started or stream ID changed)
+        if (liveStream.id !== this.currentStreamId) {
+          logger.info(`🔄 Rumble stream transition: ${this.currentStreamId || 'none'} → ${liveStream.id} ("${liveStream.title}")`);
+          this.currentStreamId = liveStream.id;
+          await rumbleCookieManager.setChatId(liveStream.id);
+
+          // Close the old browser and reinitialize on the new stream
+          await rumbleCookieManager.closeChatBrowser();
+          logger.info('Reinitializing chat browser for new stream...');
+          const browserReady = await rumbleCookieManager.initializeChatBrowser(liveStream.id);
+          if (browserReady) {
+            logger.info('✅ Chat browser ready for new stream');
+          } else {
+            logger.warn('⚠️ Chat browser init failed for new stream — will retry on next message');
+          }
+
+          // Reset processed messages for new stream
+          this.processedMessageIds.clear();
+          isFirstPoll = true;
         }
 
         const messages = liveStream.chat?.recent_messages || [];
