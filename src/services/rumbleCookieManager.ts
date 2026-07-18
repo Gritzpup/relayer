@@ -137,6 +137,20 @@ export class RumbleCookieManager {
 
       this.chatPage = await this.chatBrowser.newPage();
 
+      // Rumble's "Delete this message" action uses window.confirm(). An
+      // unhandled dialog blocks the page's JS thread and makes Puppeteer calls
+      // appear to hang forever.
+      this.chatPage.on('dialog', async (dialog: any) => {
+        const prompt = dialog.message() || '';
+        if (dialog.type() === 'confirm' && /delete/i.test(prompt)) {
+          logger.info('[RUMBLE BROWSER] Accepting message deletion confirmation');
+          await dialog.accept();
+        } else {
+          logger.warn(`[RUMBLE BROWSER] Dismissing unexpected ${dialog.type()} dialog`);
+          await dialog.dismiss();
+        }
+      });
+
       // Set cookies on the rumble.com domain
       const cookiePairs = cookies.split('; ').filter(Boolean);
       for (const pair of cookiePairs) {
@@ -223,7 +237,7 @@ export class RumbleCookieManager {
    * Send through the same authenticated endpoint used by rumble.com itself.
    * Running fetch inside the logged-in page preserves Cloudflare/browser state.
    */
-  async sendMessageViaApi(message: string, chatId: string, streamId: string): Promise<boolean> {
+  async sendMessageViaApi(message: string, chatId: string, streamId: string): Promise<string | undefined> {
     const previousSend = this.sendQueue;
     let releaseSend!: () => void;
     this.sendQueue = new Promise<void>(resolve => { releaseSend = resolve; });
@@ -232,12 +246,12 @@ export class RumbleCookieManager {
     try {
       if (!/^\d+$/.test(chatId)) {
         logger.error(`[RUMBLE API] Invalid numeric chat id: ${chatId}`);
-        return false;
+        return undefined;
       }
 
       if (!this.chatInitialized || !this.chatPage || this.chatPage.isClosed()) {
         const ok = await this.initializeChatBrowser(streamId);
-        if (!ok) return false;
+        if (!ok) return undefined;
       }
 
       const requestId = crypto.randomBytes(32).toString('base64url');
@@ -268,13 +282,93 @@ export class RumbleCookieManager {
 
       if (!result.ok) {
         logger.error(`[RUMBLE API] Send failed (${result.status}): ${result.body.substring(0, 500)}`);
-        return false;
+        return undefined;
       }
 
       logger.info(`[RUMBLE API] Message accepted (${result.status})`);
-      return true;
+
+      // The public livestream API omits message IDs. The authenticated chat DOM
+      // includes the real ID, which is required for moderator deletion.
+      await this.chatPage.waitForFunction(
+        ({ message, chatId }: { message: string; chatId: string }) => {
+          return Array.from(document.querySelectorAll('li.js-chat-history-item'))
+            .some((row: Element) =>
+              row.getAttribute('data-video-fid') === chatId &&
+              row.querySelector('.js-chat-message')?.textContent?.trim() === message
+            );
+        },
+        { timeout: 5000 },
+        { message, chatId }
+      );
+
+      const messageId = await this.chatPage.evaluate(
+        ({ message, chatId }: { message: string; chatId: string }) => {
+          const matches = Array.from(document.querySelectorAll('li.js-chat-history-item'))
+            .filter((row: Element) =>
+              row.getAttribute('data-video-fid') === chatId &&
+              row.querySelector('.js-chat-message')?.textContent?.trim() === message
+            );
+          return matches.at(-1)?.getAttribute('data-message-id') || undefined;
+        },
+        { message, chatId }
+      );
+
+      if (!messageId) {
+        logger.error('[RUMBLE API] Message was accepted but its DOM ID was not found');
+        return undefined;
+      }
+
+      logger.info(`[RUMBLE API] Captured message ID ${messageId}`);
+      return messageId;
     } catch (error: any) {
       logger.error('[RUMBLE API] Failed to send message:', error.message);
+      return undefined;
+    } finally {
+      releaseSend();
+    }
+  }
+
+  async deleteMessageViaBrowser(messageId: string, chatId: string): Promise<boolean> {
+    const previousSend = this.sendQueue;
+    let releaseSend!: () => void;
+    this.sendQueue = new Promise<void>(resolve => { releaseSend = resolve; });
+
+    try {
+      logger.info(`[RUMBLE DELETE] Waiting for browser queue for message ${messageId}`);
+      await Promise.race([
+        previousSend,
+        new Promise<void>((_, reject) => setTimeout(() => reject(new Error('browser queue timeout')), 5000)),
+      ]);
+      logger.info(`[RUMBLE DELETE] Browser queue acquired for message ${messageId}`);
+
+      if (!this.chatInitialized || !this.chatPage || this.chatPage.isClosed()) {
+        logger.error('[RUMBLE DELETE] Chat browser is not initialized');
+        return false;
+      }
+
+      // This is the exact request issued after selecting "Delete this message"
+      // and accepting Rumble's confirmation dialog. The chat DOM keeps a stale
+      // row after a successful delete, so the HTTP response is authoritative.
+      const result = await this.chatPage.evaluate(
+        async ({ messageId, chatId }: { messageId: string; chatId: string }) => {
+          const response = await fetch(
+            `https://web7.rumble.com/chat/api/chat/${chatId}/message/${messageId}`,
+            { method: 'DELETE', credentials: 'include', headers: { accept: '*/*' } }
+          );
+          return { ok: response.ok, status: response.status, body: await response.text() };
+        },
+        { messageId, chatId }
+      );
+
+      if (!result.ok) {
+        logger.error(`[RUMBLE DELETE] Request failed (${result.status}): ${result.body.substring(0, 500)}`);
+        return false;
+      }
+
+      logger.info(`[RUMBLE DELETE] Deleted message ${messageId} (${result.status})`);
+      return true;
+    } catch (error: any) {
+      logger.error(`[RUMBLE DELETE] Failed to delete message ${messageId}:`, error.message);
       return false;
     } finally {
       releaseSend();

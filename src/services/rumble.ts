@@ -311,15 +311,15 @@ export class RumbleService implements PlatformService {
 
       // A livestream id (for example 7aq032) is not the numeric chat id used by
       // /chat/api/chat/:chatId/message. Prefer the configured numeric chat id.
-      const success = chatId
+      const sentMessageId = chatId
         ? await rumbleCookieManager.sendMessageViaApi(messageContent, chatId, streamId)
-        : await rumbleCookieManager.sendMessageViaBrowser(messageContent, streamId);
+        : (await rumbleCookieManager.sendMessageViaBrowser(messageContent, streamId) ? `rumble-${Date.now()}` : undefined);
 
-      if (success) {
+      if (sentMessageId) {
         this.status.messagesSent++;
         logPlatformMessage('Rumble', 'out', messageContent, 'bot');
         logger.info('[RUMBLE] Message sent successfully');
-        return `rumble-${Date.now()}`;
+        return sentMessageId;
       }
 
       logger.warn('[RUMBLE] Browser send failed');
@@ -338,9 +338,12 @@ export class RumbleService implements PlatformService {
   }
 
   async deleteMessage(messageId: string, channelId?: string): Promise<boolean> {
-    // Rumble doesn't support message deletion via API
-    logger.debug('Rumble does not support message deletion via API');
-    return false;
+    const chatId = config.rumble?.chatId;
+    if (!chatId || !/^\d+$/.test(messageId)) {
+      logger.warn(`[RUMBLE DELETE] Cannot delete without numeric chat/message IDs (message: ${messageId})`);
+      return false;
+    }
+    return rumbleCookieManager.deleteMessageViaBrowser(messageId, chatId);
   }
 
   onMessage(handler: MessageHandler): void {

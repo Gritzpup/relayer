@@ -407,11 +407,10 @@ export class RelayManager {
         const formattedContent = this.formatter.formatForPlatform(message, targetPlatform, formatterReplyInfo);
         // logger.info(`Formatted content for ${targetPlatform}: "${formattedContent}"`);
         
-        // Check if target is Twitch or Kick (string comparison to avoid TS narrowing issues)
-        // Twitch and Kick don't support native edits, so delete old message + send new
+        // Twitch, Kick, and Rumble don't support native edits, so delete old + repost.
         if (targetPlatform.toString() === Platform.Twitch.toString() ||
-            targetPlatform.toString() === Platform.Kick.toString()) {
-          // Twitch/Kick don't support edits, so try to delete old message first
+            targetPlatform.toString() === Platform.Kick.toString() ||
+            targetPlatform.toString() === Platform.Rumble.toString()) {
           let deleteSuccess = false;
           try {
             deleteSuccess = await service.deleteMessage(messageId);
