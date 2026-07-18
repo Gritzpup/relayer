@@ -191,6 +191,18 @@ export class RumbleCookieManager {
     }
   }
 
+  // Chat-specific selectors — matches Rumble's actual chat input.
+  // The chat <textarea> has id="chat-message-text-input" and class="chat--input".
+  // Ancestor selectors like [class*="chat"] textarea match the COMMENTS textarea
+  // because "comments" ancestors wrap it. Use textarea[class*="chat"] to only
+  // match textareas whose OWN class contains "chat".
+  private readonly CHAT_INPUT_SELECTOR = [
+    '#chat-message-text-input',                   // exact ID from Rumble's live chat
+    'textarea.chat--input',                       // exact class from Rumble's live chat
+    'textarea[class*="chat" i]',                   // textarea whose own class contains "chat"
+    '[data-testid="chat-input"]',
+  ].join(', ');
+
   /**
    * Wait for the chat input to appear on the chat popout page.
    * Since we navigate directly to the popout, chat is on the main page (no iframe).
@@ -200,14 +212,12 @@ export class RumbleCookieManager {
     const timeout = 20000;
 
     while (Date.now() - startTime < timeout) {
-      const hasInput = await this.chatPage.evaluate(() => {
-        // Rumble chat input is typically a textarea or input in the popout
-        const el = document.querySelector('textarea, input[type="text"], [contenteditable="true"], [data-testid="chat-input"], [class*="chat" i] input, [class*="chat" i] textarea');
-        return !!el;
-      });
+      const hasInput = await this.chatPage.evaluate((selector: string) => {
+        return !!document.querySelector(selector);
+      }, this.CHAT_INPUT_SELECTOR);
 
       if (hasInput) {
-        logger.info('[RUMBLE BROWSER] Chat input found on popout page');
+        logger.info('[RUMBLE BROWSER] Chat input found on live page');
         return;
       }
 
@@ -394,15 +404,17 @@ export class RumbleCookieManager {
       // Focus the chat input by clicking it
       logger.info(`[RUMBLE BROWSER] Sending message: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}"`);
 
-      const inputSelector = 'textarea, input[type="text"], [contenteditable="true"], [class*="chat" i] input, [class*="chat" i] textarea';
+      // Chat-specific selectors only — generic input[type="text"]/textarea matches
+      // Rumble's global search bar, not the actual chat input.
+      const inputSelector = this.CHAT_INPUT_SELECTOR;
       
-      // Click the input to focus it; fallback to Tab if click fails
+      // Click the input to focus it; do NOT fall back to Tab — Tab would focus
+      // the search bar (first in DOM order) and undo the chat-specific fix.
       try {
         await target.click(inputSelector, { timeout: 5000 });
       } catch {
-        logger.warn('[RUMBLE BROWSER] Could not click chat input, trying focus via keyboard');
-        await target.keyboard.press('Tab');
-        await new Promise(r => setTimeout(r, 500));
+        logger.error('[RUMBLE BROWSER] Chat input not found — selector did not match any element');
+        return false;
       }
 
       // Wait for focus

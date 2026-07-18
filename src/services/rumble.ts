@@ -307,22 +307,33 @@ export class RumbleService implements PlatformService {
       }
 
       const chatId = config.rumble?.chatId;
-      logger.info(`[RUMBLE] Sending message via ${chatId ? 'authenticated API' : 'browser automation'}: "${messageContent.substring(0, 50)}..."`);
 
-      // A livestream id (for example 7aq032) is not the numeric chat id used by
-      // /chat/api/chat/:chatId/message. Prefer the configured numeric chat id.
-      const sentMessageId = chatId
-        ? await rumbleCookieManager.sendMessageViaApi(messageContent, chatId, streamId)
-        : (await rumbleCookieManager.sendMessageViaBrowser(messageContent, streamId) ? `rumble-${Date.now()}` : undefined);
-
-      if (sentMessageId) {
-        this.status.messagesSent++;
-        logPlatformMessage('Rumble', 'out', messageContent, 'bot');
-        logger.info('[RUMBLE] Message sent successfully');
-        return sentMessageId;
+      // Try authenticated API first if chatId is configured
+      let sentMessageId: string | undefined;
+      if (chatId) {
+        logger.info(`[RUMBLE] Sending message via authenticated API: "${messageContent.substring(0, 50)}..."`);
+        sentMessageId = await rumbleCookieManager.sendMessageViaApi(messageContent, chatId, streamId);
+        if (sentMessageId) {
+          this.status.messagesSent++;
+          logPlatformMessage('Rumble', 'out', messageContent, 'bot');
+          logger.info('[RUMBLE] Message sent successfully via API');
+          return sentMessageId;
+        }
+        // API failed — fall back to browser
+        logger.warn('[RUMBLE] API send failed, falling back to browser automation...');
       }
 
-      logger.warn('[RUMBLE] Browser send failed');
+      // Browser fallback (or primary if no chatId configured)
+      logger.info(`[RUMBLE] Sending message via browser automation: "${messageContent.substring(0, 50)}..."`);
+      const browserOk = await rumbleCookieManager.sendMessageViaBrowser(messageContent, streamId);
+      if (browserOk) {
+        this.status.messagesSent++;
+        logPlatformMessage('Rumble', 'out', messageContent, 'bot');
+        logger.info('[RUMBLE] Message sent successfully via browser');
+        return `rumble-${Date.now()}`;
+      }
+
+      logger.warn('[RUMBLE] Send failed');
       return undefined;
 
     } catch (error: any) {
