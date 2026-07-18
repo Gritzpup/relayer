@@ -388,6 +388,13 @@ export class RumbleCookieManager {
    * This bypasses Rumble's broken/missing REST API by typing directly into the chat.
    */
   async sendMessageViaBrowser(message: string, streamId: string): Promise<boolean> {
+    // Serialize browser access — keyboard.type() is not reentrant.
+    // Two concurrent sends would interleave characters and produce garbled text.
+    const previousSend = this.sendQueue;
+    let releaseSend!: () => void;
+    this.sendQueue = new Promise<void>(resolve => { releaseSend = resolve; });
+    await previousSend;
+
     try {
       // Initialize browser if not already done
       if (!this.chatInitialized || !this.chatPage || this.chatPage.isClosed()) {
@@ -455,6 +462,8 @@ export class RumbleCookieManager {
         await this.closeChatBrowser();
       }
       return false;
+    } finally {
+      releaseSend();
     }
   }
 
