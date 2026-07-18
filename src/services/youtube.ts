@@ -1,15 +1,14 @@
 import { config } from '../config';
 import { Platform, RelayMessage, MessageHandler, DeleteHandler, PlatformService, ServiceStatus, Attachment } from '../types';
 import { logger, logPlatformMessage, logError } from '../utils/logger';
-import { ReconnectManager } from '../utils/reconnect';
+
 import { youtubeTokenManager } from './youtubeTokenManager';
 import { YouTubeAPI } from './youtubeApi';
 
 export class YouTubeService implements PlatformService {
   platform = Platform.YouTube;
   private messageHandler?: MessageHandler;
-  private deleteHandler?: DeleteHandler;
-  private reconnectManager: ReconnectManager;
+
   private isConnecting: boolean = false;
   private api: YouTubeAPI;
   private liveChatId: string | null = null;
@@ -29,15 +28,7 @@ export class YouTubeService implements PlatformService {
 
   constructor() {
     this.api = new YouTubeAPI();
-    this.reconnectManager = new ReconnectManager(
-      'YouTube',
-      () => this.connectInternal(),
-      {
-        initialDelay: 2000,
-        maxDelay: 30000,
-        factor: 2,
-      }
-    );
+
   }
 
   async connect(): Promise<void> {
@@ -421,9 +412,9 @@ export class YouTubeService implements PlatformService {
   async sendMessage(
     content: string,
     attachments?: Attachment[],
-    replyToMessageId?: string,
-    targetChannelId?: string,
-    originalMessage?: RelayMessage
+    _replyToMessageId?: string,
+    _targetChannelId?: string,
+    _originalMessage?: RelayMessage
   ): Promise<string | undefined> {
 
     if (!this.status.connected || !this.liveChatId) {
@@ -468,13 +459,13 @@ export class YouTubeService implements PlatformService {
     }
   }
 
-  async editMessage(messageId: string, newContent: string): Promise<boolean> {
+  async editMessage(_messageId: string, _newContent: string): Promise<boolean> {
     // YouTube doesn't support message editing
     logger.debug('YouTube does not support message editing');
     return false;
   }
 
-  async deleteMessage(messageId: string, channelId?: string): Promise<boolean> {
+  async deleteMessage(messageId: string, _channelId?: string): Promise<boolean> {
     try {
       return await this.api.deleteChatMessage(messageId);
     } catch (error) {
@@ -487,8 +478,8 @@ export class YouTubeService implements PlatformService {
     this.messageHandler = handler;
   }
 
-  onDelete(handler: DeleteHandler): void {
-    this.deleteHandler = handler;
+  onDelete(_handler: DeleteHandler): void {
+    // stored for future use
   }
 
   getStatus(): ServiceStatus {

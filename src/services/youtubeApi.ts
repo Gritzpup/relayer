@@ -1,7 +1,6 @@
 import axios from 'axios';
 import { logger } from '../utils/logger';
 import { youtubeTokenManager } from './youtubeTokenManager';
-import { config } from '../config';
 
 interface LiveChatMessage {
   kind: string;

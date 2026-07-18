@@ -1,6 +1,5 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import path from 'path';
 import { logger } from './logger';
 
 const execAsync = promisify(exec);
@@ -128,6 +127,7 @@ export class TokenNotificationManager {
     }
   }
 
+  // @ts-expect-error reserved for GUI fallback
   private async fallbackGUIPopup(title: string, message: string): Promise<void> {
     try {
       // Try kdialog for KDE

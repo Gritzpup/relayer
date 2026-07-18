@@ -309,6 +309,7 @@ export class RelayManager {
     
     // Log details about each reply found
     for (const reply of replies) {
+      void reply; // referenced for future use
       // logger.info(`Reply found: ${reply.id} from ${reply.originalPlatform}, platforms: ${JSON.stringify(reply.platformMessages)}`);
     }
     

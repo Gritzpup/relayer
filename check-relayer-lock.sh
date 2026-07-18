@@ -2,8 +2,8 @@
 
 # Check if relayer database is locked and manage the process
 
-DB_FILE="/home/ubuntubox/Documents/Github/relayer/relay_messages.db"
-RELAYER_DIR="/home/ubuntubox/Documents/Github/relayer"
+DB_FILE="/home/ubuntubox2/Documents/Github/relayer/relay_messages.db"
+RELAYER_DIR="/home/ubuntubox2/Documents/Github/relayer"
 
 echo "Checking relayer database lock status..."
 

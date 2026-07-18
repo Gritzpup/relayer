@@ -2,8 +2,8 @@
 
 # Safely start the relayer after checking for locks
 
-DB_FILE="/home/ubuntubox/Documents/Github/relayer/relay_messages.db"
-RELAYER_DIR="/home/ubuntubox/Documents/Github/relayer"
+DB_FILE="/home/ubuntubox2/Documents/Github/relayer/relay_messages.db"
+RELAYER_DIR="/home/ubuntubox2/Documents/Github/relayer"
 
 cd "$RELAYER_DIR" || exit 1
 

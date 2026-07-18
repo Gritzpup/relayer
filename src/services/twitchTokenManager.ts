@@ -261,11 +261,12 @@ export class TwitchTokenManager {
       }
       
       return true;
-    } catch (error) {
-      if (error.response?.status === 401) {
+    } catch (error: unknown) {
+      const axiosError = error as { response?: { status?: number }; message?: string };
+      if (axiosError.response?.status === 401) {
         logger.error('❌ Token validation failed: Token is invalid or expired');
       } else {
-        logger.error('❌ Token validation failed:', error.message);
+        logger.error('❌ Token validation failed:', axiosError.message);
       }
       return false;
     }
@@ -338,7 +339,7 @@ export class TwitchTokenManager {
     const app = express();
     const port = 3000;
     
-    app.get('/auth/callback', async (req, res) => {
+    app.get('/auth/callback', async      (req: any, res: any) => {
       const { code, error } = req.query;
       
       if (error || !code) {

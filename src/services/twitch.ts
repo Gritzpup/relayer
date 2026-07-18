@@ -21,7 +21,7 @@ export class TwitchService implements PlatformService {
   private messageHandler?: MessageHandler;
   // Fired (via the tmi.js 'messagedeleted' event) when a mod/bot removes a message
   // on Twitch, so the deletion propagates to the other platforms.
-  private _deleteHandler?: DeleteHandler;
+  // private _deleteHandler?: DeleteHandler; // reserved for future use
   private reconnectManager: ReconnectManager;
   private isConnecting: boolean = false;
   private recentMessages: Map<string, RecentMessage> = new Map(); // Key: author (lowercase)
@@ -238,7 +238,7 @@ export class TwitchService implements PlatformService {
       if (isValid) {
         const hasScopes = await this.api.hasRequiredScopes();
         if (hasScopes) {
-          const hasDeletionScope = await this.api.hasModeratorScope();
+          await this.api.hasModeratorScope();
           this.useApi = true;
           logger.info('Twitch Chat API enabled - messages will be sent via API');
         } else {
@@ -582,8 +582,8 @@ export class TwitchService implements PlatformService {
     this.messageHandler = handler;
   }
 
-  onDelete(handler: DeleteHandler): void {
-    this._deleteHandler = handler;
+  onDelete(_handler: DeleteHandler): void {
+    // stored for future use
   }
 
   getStatus(): ServiceStatus {

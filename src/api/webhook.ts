@@ -26,7 +26,10 @@ async function getKickPublicKey(): Promise<string> {
   try {
     const response = await axios.get('https://api.kick.com/public/v1/public-key');
     // Extract public key from response - it's nested in data.data.public_key
-    kickPublicKey = response.data?.data?.public_key || response.data?.public_key || response.data;
+    kickPublicKey = response.data?.data?.public_key || response.data?.public_key || response.data || '';
+    if (!kickPublicKey) {
+      throw new Error('Failed to extract Kick public key from response');
+    }
     logger.debug(`Fetched Kick public key: ${kickPublicKey.substring(0, 50)}...`);
     return kickPublicKey;
   } catch (error) {

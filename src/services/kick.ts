@@ -40,7 +40,6 @@ interface KickChannelInfo {
 export class KickService implements PlatformService {
   platform = Platform.Kick;
   private messageHandler?: MessageHandler;
-  private deleteHandler?: DeleteHandler;
   private reconnectManager: ReconnectManager;
   private isConnecting: boolean = false;
   private ws: WebSocket | null = null;
@@ -208,6 +207,7 @@ export class KickService implements PlatformService {
     }
   }
 
+  // @ts-expect-error reserved for future Pusher WebSocket usage
   private async connectWebSocket(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
@@ -220,7 +220,7 @@ export class KickService implements PlatformService {
           logger.info('Kick WebSocket connected');
 
           // Get access token for authenticated subscriptions
-          let accessToken = config.kick?.token;
+          void config.kick?.token;
           const socketId = await new Promise<string>((resolveSocketId) => {
             const connectionHandler = (data: Buffer) => {
               const msg = JSON.parse(data.toString());
@@ -393,10 +393,10 @@ export class KickService implements PlatformService {
 
   async sendMessage(
     content: string, 
-    attachments?: Attachment[], 
-    replyToMessageId?: string,
-    targetChannelId?: string,
-    originalMessage?: RelayMessage
+    _attachments?: Attachment[], 
+    _replyToMessageId?: string,
+    _targetChannelId?: string,
+    _originalMessage?: RelayMessage
   ): Promise<string | undefined> {
     
     if (!this.status.connected) {
@@ -422,7 +422,7 @@ export class KickService implements PlatformService {
     }
   }
 
-  async editMessage(messageId: string, newContent: string): Promise<boolean> {
+  async editMessage(_messageId: string, _newContent: string): Promise<boolean> {
     // Kick doesn't support native message editing
     // Follow Twitch pattern: delete old message, then send new one
     // The relay manager handles the delete+resend flow via handleEdit
@@ -430,7 +430,7 @@ export class KickService implements PlatformService {
     return false;
   }
 
-  async deleteMessage(messageId: string, channelId?: string): Promise<boolean> {
+  async deleteMessage(messageId: string, _channelId?: string): Promise<boolean> {
     if (!this.status.connected) {
       logger.warn('Cannot delete Kick message: Not connected');
       return false;
@@ -454,8 +454,8 @@ export class KickService implements PlatformService {
     this.messageHandler = handler;
   }
 
-  onDelete(handler: DeleteHandler): void {
-    this.deleteHandler = handler;
+  onDelete(_handler: DeleteHandler): void {
+    // stored for future use
   }
 
   getStatus(): ServiceStatus {

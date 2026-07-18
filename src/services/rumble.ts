@@ -1,7 +1,7 @@
 import { config } from '../config';
 import { Platform, RelayMessage, MessageHandler, DeleteHandler, PlatformService, ServiceStatus, Attachment } from '../types';
 import { logger, logPlatformMessage, logError } from '../utils/logger';
-import { ReconnectManager } from '../utils/reconnect';
+
 import { rumbleCookieManager } from './rumbleCookieManager';
 import axios from 'axios';
 
@@ -27,8 +27,7 @@ interface RumbleApiResponse {
 export class RumbleService implements PlatformService {
   platform = Platform.Rumble;
   private messageHandler?: MessageHandler;
-  private deleteHandler?: DeleteHandler;
-  private reconnectManager: ReconnectManager;
+
   private isConnecting: boolean = false;
   private pollingInterval: NodeJS.Timeout | null = null;
   private processedMessageIds: Set<string> = new Set();
@@ -46,15 +45,7 @@ export class RumbleService implements PlatformService {
     this.apiKey = config.rumble?.apiKey || '';
     this.apiUrl = `https://rumble.com/-livestream-api/get-data?key=${this.apiKey}`;
 
-    this.reconnectManager = new ReconnectManager(
-      'Rumble',
-      () => this.connectInternal(),
-      {
-        initialDelay: 2000,
-        maxDelay: 30000,
-        factor: 2,
-      }
-    );
+
   }
 
   async connect(): Promise<void> {
@@ -287,9 +278,9 @@ export class RumbleService implements PlatformService {
   async sendMessage(
     content: string,
     attachments?: Attachment[],
-    replyToMessageId?: string,
-    targetChannelId?: string,
-    originalMessage?: RelayMessage
+    _replyToMessageId?: string,
+    _targetChannelId?: string,
+    _originalMessage?: RelayMessage
   ): Promise<string | undefined> {
 
     if (!this.status.connected) {
@@ -367,13 +358,13 @@ export class RumbleService implements PlatformService {
     }
   }
 
-  async editMessage(messageId: string, newContent: string): Promise<boolean> {
+  async editMessage(_messageId: string, _newContent: string): Promise<boolean> {
     // Rumble doesn't support message editing
     logger.debug('Rumble does not support message editing');
     return false;
   }
 
-  async deleteMessage(messageId: string, channelId?: string): Promise<boolean> {
+  async deleteMessage(messageId: string, _channelId?: string): Promise<boolean> {
     const chatId = config.rumble?.chatId;
     if (!chatId || !/^\d+$/.test(messageId)) {
       logger.warn(`[RUMBLE DELETE] Cannot delete without numeric chat/message IDs (message: ${messageId})`);
@@ -386,8 +377,8 @@ export class RumbleService implements PlatformService {
     this.messageHandler = handler;
   }
 
-  onDelete(handler: DeleteHandler): void {
-    this.deleteHandler = handler;
+  onDelete(_handler: DeleteHandler): void {
+    // stored for future use
   }
 
   getStatus(): ServiceStatus {

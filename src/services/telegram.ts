@@ -168,20 +168,12 @@ export class TelegramService implements PlatformService {
       this.lastMessageReceivedTime = Date.now();
       const username = msg.from?.username || msg.from?.first_name || 'Unknown';
       
-      // Enhanced debug logging for reply detection
-      const debugInfo = {
-        message_id: msg.message_id,
-        text: msg.text?.substring(0, 50) + (msg.text && msg.text.length > 50 ? '...' : ''),
-        topic_id: threadId || 'general',
-        from: msg.from?.username || msg.from?.first_name,
-        has_reply_to: !!msg.reply_to_message,
-        reply_to_id: msg.reply_to_message?.message_id,
-        message_thread_id: msg.message_thread_id,
-        chat_type: msg.chat.type,
-        is_topic_message: msg.is_topic_message
-      };
-      
-      // // logger.info(`Telegram message in #${channelName}:`, debugInfo);
+      // // logger.info(`Telegram message in #${channelName}:`, {
+      // //   message_id: msg.message_id,
+      // //   topic_id: threadId || 'general',
+      // //   from: msg.from?.username || msg.from?.first_name,
+      // //   has_reply_to: !!msg.reply_to_message
+      // // });
       
       // Extra logging for reply detection issues (commented out)
       if (msg.reply_to_message) {
@@ -687,9 +679,9 @@ export class TelegramService implements PlatformService {
       
       // Check bot permissions in the group
       try {
-        const chat = await this.bot.getChat(config.telegram.groupId);
-        // logger.info(`[TELEGRAM] Connected to group: ${chat.title || 'Unknown'}, type: ${chat.type}`);
-        // console.log(`[TELEGRAM] Group info - Title: ${chat.title}, Type: ${chat.type}, ID: ${chat.id}`);
+        await this.bot.getChat(config.telegram.groupId);
+        // logger.info(`[TELEGRAM] Connected to group: test, type: test`);
+        // console.log(`[TELEGRAM] Group info fetched`);
         
         // Get bot member info to check permissions
         const botMember = await this.bot.getChatMember(config.telegram.groupId, me.id);
@@ -779,9 +771,12 @@ export class TelegramService implements PlatformService {
 
     // [Rest of sendMessage method remains the same...]
     // Prepare options for reply and topic
+    // Only disable web page preview if the content has no embeddable URL
+    // (allows YouTube, Twitter, etc. links from Discord to show previews in Telegram)
+    const hasEmbeddableUrl = /https?:\/\/[^\s]+/.test(content);
     const messageOptions: any = {
       parse_mode: 'HTML' as const, // Enable HTML formatting for bold tags
-      disable_web_page_preview: true
+      disable_web_page_preview: !hasEmbeddableUrl
     };
     
     if (replyToMessageId) {

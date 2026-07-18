@@ -114,58 +114,48 @@ async function main() {
     app.use('/api', webhookRouter);
     
     // Health endpoint
-    app.get('/health', (req, res) => {
-      try {
-        if (!relayManager) {
-          return res.status(503).json({
-            status: 'unhealthy',
-            message: 'Relay manager not initialized',
-            uptime: process.uptime()
-          });
-        }
-        
-        const status = relayManager.getStatus();
-        const allConnected = status.services.every((service: any) => service.connected);
-        
-        res.json({
-          status: allConnected ? 'healthy' : 'degraded',
-          uptime: process.uptime(),
-          services: status.services,
-          isRunning: status.isRunning,
-          messageHistory: status.messageHistory,
-          rateLimit: status.rateLimit
-        });
-      } catch (error) {
-        res.status(500).json({
-          status: 'error',
-          message: error instanceof Error ? error.message : 'Unknown error',
+    app.get('/health', (_req, res) => {
+      if (!relayManager) {
+        res.status(503).json({
+          status: 'unhealthy',
+          message: 'Relay manager not initialized',
           uptime: process.uptime()
         });
+        return;
       }
+      
+      const status = relayManager.getStatus();
+      const allConnected = status.services.every((service: any) => service.connected);
+      
+      res.json({
+        status: allConnected ? 'healthy' : 'degraded',
+        uptime: process.uptime(),
+        services: status.services,
+        isRunning: status.isRunning,
+        messageHistory: status.messageHistory,
+        rateLimit: status.rateLimit
+      });
     });
     
-    const PORT = process.env.WEBHOOK_PORT || 14002;
+    const PORT = parseInt(process.env.WEBHOOK_PORT || '14002');
 
     // Normal HTTP server — Node.js automatically sets SO_REUSEADDR on the listen socket
-    webhookServer = app.listen(PORT, () => {
-      logger.info(`Webhook server listening on port ${PORT}`);
-    });
-    
-    // Handle server errors
-    webhookServer.on('error', (error: any) => {
-      console.error(`[WEBHOOK] ❌ Server error:`, error.message);
-      if (error.code === 'EADDRINUSE') {
-        console.error(`[WEBHOOK] Port ${PORT} is already in use!`);
-        logger.error(`Port ${PORT} is already in use. Please ensure no other instances are running.`);
-        logger.error('Try running: lsof -i :' + PORT + ' to find the process using this port');
-        console.log('\nTo find what\'s using the port, run:');
-        console.log(`  lsof -i :${PORT}`);
-        console.log('\nTo kill the process, run:');
-        console.log(`  kill -9 <PID>`);
-        process.exit(1);
-      } else {
-        logger.error('Webhook server error:', error);
-      }
+    await new Promise<void>((resolve, reject) => {
+      webhookServer = app.listen(PORT, () => {
+        logger.info(`Webhook server listening on port ${PORT}`);
+        resolve();
+      });
+      webhookServer.on('error', (error: any) => {
+        console.error(`[WEBHOOK] ❌ Server error:`, error.message);
+        if (error.code === 'EADDRINUSE') {
+          console.error(`[WEBHOOK] Port ${PORT} is already in use!`);
+          logger.error(`Port ${PORT} is already in use. Please ensure no other instances are running.`);
+          process.exit(1);
+        } else {
+          logger.error('Webhook server error:', error);
+        }
+        reject(error);
+      });
     });
 
     // console.log('[STARTUP] Creating relay manager...');

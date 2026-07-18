@@ -23,30 +23,24 @@ export const logger = {
       console.warn(`${timestamp()} [WARN] ${message} [meta-error]`);
     }
   },
-  debug: (message: string, meta?: any) => {
+  debug: (_message: string, _meta?: any) => {
     // DEBUG logs disabled to reduce Tilt spam
-    // Only critical errors, warnings, and info messages are shown
-    try {
-      // console.log(`${timestamp()} [DEBUG] ${message}`, meta ? JSON.stringify(meta) : '');
-    } catch (e) {
-      // console.log(`${timestamp()} [DEBUG] ${message} [meta-error]`);
-    }
   },
   end: () => { /* no-op */ },
 };
 
 // Safe logging functions
 export const logInfo = (message: string, meta?: any) => logger.info(message, meta);
-export const logError = (message: string, error?: any) => logger.error(message, error);
+export const logError = (error: Error | unknown, message?: string) => {
+  const errMsg = error instanceof Error ? error.message : String(error);
+  logger.error(message || errMsg, error);
+};
 export const logWarn = (message: string, meta?: any) => logger.warn(message, meta);
 export const logDebug = (message: string, meta?: any) => logger.debug(message, meta);
 
 // Platform message logging - simplified (disabled to reduce spam)
-export const logPlatformMessage = (platform: string, direction: 'in' | 'out', message: string, user?: string) => {
+export const logPlatformMessage = (_platform: string, _direction: 'in' | 'out', _message: string, _user?: string) => {
   // Disabled - was generating excessive DEBUG logs
-  // const prefix = direction === 'in' ? '←' : '→';
-  // const userInfo = user ? ` [${user}]` : '';
-  // logger.debug(`${prefix} ${platform}${userInfo}: ${message.substring(0, 50)}${message.length > 50 ? '...' : ''}`);
 };
 
 export default logger;

@@ -1,7 +1,6 @@
 import axios from 'axios';
 import { logger } from '../utils/logger';
 import { kickTokenManager } from './kickTokenManager';
-import { config } from '../config';
 
 export class KickAPI {
   private baseURL = 'https://api.kick.com';
@@ -11,7 +10,7 @@ export class KickAPI {
   /**
    * Send a message to a Kick chat
    */
-  async sendChatMessage(channelId: string, message: string): Promise<string | undefined> {
+  async sendChatMessage(_channelId: string, message: string): Promise<string | undefined> {
     try {
       // Always use token manager to get the latest token (handles refresh automatically)
       let accessToken = await kickTokenManager.getAccessToken();
@@ -58,6 +57,7 @@ export class KickAPI {
   /**
    * Get chatroom ID for a channel
    */
+  // @ts-expect-error reserved for future chatroom ID lookup
   private async getChatroomId(channelSlug: string): Promise<number | null> {
     try {
       // Try the private API first
@@ -152,7 +152,7 @@ export class KickAPI {
   /**
    * Subscribe to Kick events via webhooks
    */
-  async subscribeToEvents(webhookUrl: string, broadcasterUserId: string | number, events: Array<{name: string, version: number}>): Promise<any> {
+  async subscribeToEvents(webhookUrl: string, _broadcasterUserId: string | number, events: Array<{name: string, version: number}>): Promise<any> {
     try {
       let accessToken = await kickTokenManager.getAccessToken();
 

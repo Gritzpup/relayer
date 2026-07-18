@@ -176,7 +176,6 @@ export class MessageMapper {
    * Add a platform message ID to an existing mapping
    */
   async addPlatformMessage(mappingId: string, platform: Platform, messageId: string, channelId?: string): Promise<void> {
-    const startTime = Date.now();
     logger.debug(`addPlatformMessage: Starting - mapping=${mappingId}, platform=${platform}, messageId=${messageId}, channelId=${channelId}`);
     
     // Get existing mapping from Redis
@@ -222,8 +221,7 @@ export class MessageMapper {
       messageId
     }).catch(err => logger.error('Failed to track platform message in database:', err));
     
-    const elapsed = Date.now() - startTime;
-    // // logger.info(`PLATFORM MESSAGE: Added ${platform} message ${messageId} to mapping ${mappingId} (took ${elapsed}ms)`);
+    // // logger.info(`PLATFORM MESSAGE: Added ${platform} message ${messageId} to mapping ${mappingId}`);
   }
 
   /**

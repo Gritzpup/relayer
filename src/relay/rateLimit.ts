@@ -94,6 +94,9 @@ export class RateLimiter {
       [Platform.Discord]: customLimit || 30,
       [Platform.Telegram]: customLimit || 20,
       [Platform.Twitch]: customLimit || 20,
+      [Platform.Kick]: customLimit || 20,
+      [Platform.YouTube]: customLimit || 10,
+      [Platform.Rumble]: customLimit || 10,
     };
 
     return platformLimits[platform];

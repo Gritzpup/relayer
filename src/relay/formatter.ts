@@ -149,7 +149,6 @@ export class MessageFormatter {
 
       if (targetPlatform === Platform.Twitch) {
         // Twitch: Use Unicode bold characters for platform tags and usernames
-        const boldPlatformTag = this.toUnicodeBold(`[${message.platform}]`);
         const boldAuthor = this.toUnicodeBold(author);
         const prefix = `${boldAuthor}`;
         formattedContent = `${prefix}: ${formattedContent}`;

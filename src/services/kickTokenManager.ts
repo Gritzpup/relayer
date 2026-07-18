@@ -279,7 +279,7 @@ export class KickTokenManager {
     const app = express();
     const port = 3000;
     
-    app.get('/auth/kick/callback', async (req, res) => {
+    app.get('/auth/kick/callback', async      (req: any, res: any) => {
       const { code, error } = req.query;
       
       if (error || !code) {

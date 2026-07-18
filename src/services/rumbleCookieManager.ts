@@ -1,4 +1,3 @@
-import axios from 'axios';
 import fs from 'fs/promises';
 import path from 'path';
 import logger from '../utils/logger';
@@ -14,7 +13,6 @@ interface RumbleCookieData {
 export class RumbleCookieManager {
   private cookieFile: string;
   private cookieData: RumbleCookieData | null = null;
-  private authServer: any = null;
   private chatBrowser: any = null;
   private chatPage: any = null;
   private chatInitialized: boolean = false;
@@ -98,7 +96,7 @@ export class RumbleCookieManager {
    * Initialize a persistent headless browser for sending chat messages.
    * Called once during connect, reused for all messages to avoid per-message launch overhead.
    */
-  async initializeChatBrowser(streamId: string): Promise<boolean> {
+  async initializeChatBrowser(_streamId: string): Promise<boolean> {
     if (this.chatInitialized && this.chatPage && !this.chatPage.isClosed()) {
       logger.debug('[RUMBLE BROWSER] Chat browser already initialized');
       return true;
@@ -471,7 +469,7 @@ export class RumbleCookieManager {
   private async showLoginGUI(): Promise<void> {
     try {
       console.log('🚀 Starting Rumble GUI login flow...');
-      const { exec, spawn } = require('child_process');
+      const { exec } = require('child_process');
       const { promisify } = require('util');
       const execAsync = promisify(exec);
 
@@ -559,7 +557,7 @@ export class RumbleCookieManager {
         const cookies = await page.cookies();
 
         // Check if we have authentication cookies
-        const hasAuthCookie = cookies.some(c =>
+        const hasAuthCookie = cookies.some((c: any) =>
           c.name.includes('session') ||
           c.name.includes('auth') ||
           c.name.includes('user') ||
@@ -573,7 +571,7 @@ export class RumbleCookieManager {
 
           // Convert cookies to header string
           const cookieString = cookies
-            .map(c => `${c.name}=${c.value}`)
+            .map((c: any) => `${c.name}=${c.value}`)
             .join('; ');
 
           // Get username by checking the page
