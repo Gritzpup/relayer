@@ -102,7 +102,12 @@ export class RumbleCookieManager {
       return true;
     }
 
+    // Use puppeteer-extra with stealth plugin to bypass Cloudflare Turnstile
+    const puppeteerExtra = require('puppeteer-extra');
+    const StealthPlugin = require('puppeteer-extra-plugin-stealth');
     const puppeteer = require('puppeteer-core');
+    puppeteerExtra.addExtra(puppeteer);
+    puppeteerExtra.use(StealthPlugin());
 
     try {
       const cookies = await this.getCookies();
@@ -113,17 +118,18 @@ export class RumbleCookieManager {
 
       const username = this.cookieData?.username || 'Gritzpup';
 
-      logger.info('[RUMBLE BROWSER] Launching persistent headless Brave for chat...');
+      logger.info('[RUMBLE BROWSER] Launching stealth headless Brave for chat...');
 
-      this.chatBrowser = await puppeteer.launch({
+      this.chatBrowser = await puppeteerExtra.launch({
         executablePath: '/usr/bin/brave-browser-stable',
-        headless: true,
+        headless: 'new',
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
           '--disable-dev-shm-usage',
           '--disable-gpu',
-          '--window-size=1280,720'
+          '--window-size=1280,720',
+          '--disable-blink-features=AutomationControlled'
         ]
       });
 
@@ -144,7 +150,7 @@ export class RumbleCookieManager {
         }
       }
 
-      // Navigate to the live stream page using the authenticated username
+      // Step 1: Navigate to the live page
       const liveUrl = `https://rumble.com/user/${username}/live`;
       logger.info(`[RUMBLE BROWSER] Navigating to ${liveUrl}...`);
 
@@ -153,8 +159,9 @@ export class RumbleCookieManager {
         timeout: 30000
       });
 
-      // Wait for chat to load
-      logger.info('[RUMBLE BROWSER] Waiting for chat to load...');
+      // Step 2: Wait for chat input to appear on the live page
+      // Chat is rendered inline (no popout needed) - Cloudflare bypass reveals textarea inputs
+      logger.info('[RUMBLE BROWSER] Waiting for chat input on live page...');
       await this.waitForChatInput();
 
       this.chatInitialized = true;
@@ -169,31 +176,22 @@ export class RumbleCookieManager {
   }
 
   /**
-   * Wait for the chat input to appear on the page (in iframe or main page).
+   * Wait for the chat input to appear on the chat popout page.
+   * Since we navigate directly to the popout, chat is on the main page (no iframe).
    */
   private async waitForChatInput(): Promise<void> {
     const startTime = Date.now();
-    const timeout = 15000;
+    const timeout = 20000;
 
     while (Date.now() - startTime < timeout) {
-      // Try finding chat iframe
-      const frames = this.chatPage.frames();
-      for (const frame of frames) {
-        const url = frame.url();
-        if (url.includes('chat') || url.includes('popout')) {
-          logger.info(`[RUMBLE BROWSER] Found chat frame: ${url}`);
-          return;
-        }
-      }
-
-      // Also try finding chat input directly on main page
       const hasInput = await this.chatPage.evaluate(() => {
-        const el = document.querySelector('textarea, [contenteditable="true"], input[type="text"]');
+        // Rumble chat input is typically a textarea or input in the popout
+        const el = document.querySelector('textarea, input[type="text"], [contenteditable="true"], [data-testid="chat-input"], [class*="chat" i] input, [class*="chat" i] textarea');
         return !!el;
       });
 
       if (hasInput) {
-        logger.info('[RUMBLE BROWSER] Found chat input on main page');
+        logger.info('[RUMBLE BROWSER] Chat input found on popout page');
         return;
       }
 
@@ -232,26 +230,22 @@ export class RumbleCookieManager {
         if (!ok) return false;
       }
 
-      // Find the active chat input (iframe or main page)
-      let target: any = this.chatPage;
-      const frames = this.chatPage.frames();
-      for (const frame of frames) {
-        const url = frame.url();
-        if (url.includes('chat') || url.includes('popout')) {
-          target = frame;
-          break;
-        }
-      }
+      // Chat is on the live page (stealth browser bypasses Cloudflare)
+      const target = this.chatPage;
 
       // Focus the chat input by clicking it
       logger.info(`[RUMBLE BROWSER] Sending message: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}"`);
 
-      const inputSelector = 'textarea, [contenteditable="true"], input[type="text"]';
+      const inputSelector = 'textarea, input[type="text"], [contenteditable="true"], [class*="chat" i] input, [class*="chat" i] textarea';
       
-      // Click the input to focus it
-      await target.click(inputSelector, { timeout: 5000 }).catch(() => {
-        logger.warn('[RUMBLE BROWSER] Could not click chat input with selector, trying focus');
-      });
+      // Click the input to focus it; fallback to Tab if click fails
+      try {
+        await target.click(inputSelector, { timeout: 5000 });
+      } catch {
+        logger.warn('[RUMBLE BROWSER] Could not click chat input, trying focus via keyboard');
+        await target.keyboard.press('Tab');
+        await new Promise(r => setTimeout(r, 500));
+      }
 
       // Wait for focus
       await new Promise(r => setTimeout(r, 300));
