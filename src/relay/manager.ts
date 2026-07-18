@@ -581,15 +581,12 @@ export class RelayManager {
     logger.debug(`[RELAY] Attempting ${message.platform} → ${targetPlatform} (channel: ${message.channelName || 'unknown'})`);
 
     // Determine target channel based on channel mapping
-    let targetChannelId: string | undefined;
-    
-    // Twitch and Kick don't have multiple channels, so skip channel mapping for them
-    if (targetPlatform === Platform.Twitch || targetPlatform === Platform.Kick) {
-      // Only relay general channel messages to Twitch/Kick
-      if (!message.channelName || message.channelName !== 'general') {
-        // logger.info(`Skipping ${message.channelName || 'unmapped channel'} message to ${targetPlatform} - only general channel is relayed`);
-        return;
-      }
+    let targetChannelId: string | undefined;      // Twitch, Kick, and Rumble only have a single chat — only relay general channel messages
+      if (targetPlatform === Platform.Twitch || targetPlatform === Platform.Kick || targetPlatform === Platform.Rumble) {
+        if (!message.channelName || message.channelName !== 'general') {
+          // logger.info(`Skipping ${message.channelName || 'unmapped channel'} message to ${targetPlatform} - only general channel is relayed`);
+          return;
+        }
       // // logger.info(`Routing message from ${message.platform} #general → ${targetPlatform}`);
     } else if (message.channelName && channelMappings[message.channelName]) {
       const mapping = channelMappings[message.channelName];
@@ -614,8 +611,8 @@ export class RelayManager {
       // Commented out verbose logging
       // logger.info(`Routing message from ${message.platform} #${message.channelName} → ${targetPlatform}`);
     } else {
-      // No channel mapping and not Twitch/Kick, skip
-      if (targetPlatform.toString() !== Platform.Twitch.toString() && targetPlatform.toString() !== Platform.Kick.toString()) {
+      // No channel mapping and not Twitch/Kick/Rumble, skip
+      if (targetPlatform.toString() !== Platform.Twitch.toString() && targetPlatform.toString() !== Platform.Kick.toString() && targetPlatform.toString() !== Platform.Rumble.toString()) {
         logger.warn(`No channel info for message to ${targetPlatform}, skipping`);
         return;
       }
