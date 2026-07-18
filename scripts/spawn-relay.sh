@@ -20,8 +20,36 @@ if [ -n "$holder" ]; then
     sleep 1
 fi
 
-# Cloudflare tunnel is managed externally (user controls tunnel + Kick dashboard webhook URL)
-# KICK_WEBHOOK_URL in .env is the source of truth
+# Cloudflare tunnel is managed by Tilt as a separate resource (cloudflared-tunnel)
+# Wait for the tunnel URL to appear, then sync it to .env
+if [ -x "$CLOUDFLARED" ]; then
+    echo "[spawn] Waiting for Cloudflare tunnel (managed by Tilt)..."
+    # Clear stale log from previous runs so we only match the current tunnel URL
+    > /tmp/cloudflared-tunnel.log
+    TUNNEL_URL=""
+    for i in $(seq 1 20); do
+        sleep 2
+        TUNNEL_URL=$(grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/cloudflared-tunnel.log 2>/dev/null | head -1)
+        if [ -n "$TUNNEL_URL" ]; then
+            echo "[spawn] Tunnel ready: $TUNNEL_URL"
+            break
+        fi
+    done
+
+    if [ -n "$TUNNEL_URL" ]; then
+        WEBHOOK_URL="${TUNNEL_URL}/api/kick-webhook"
+        if grep -q "^KICK_WEBHOOK_URL=" "$RELAY_DIR/.env"; then
+            sed -i "s|^KICK_WEBHOOK_URL=.*|KICK_WEBHOOK_URL=$WEBHOOK_URL|" "$RELAY_DIR/.env"
+        else
+            echo "KICK_WEBHOOK_URL=$WEBHOOK_URL" >> "$RELAY_DIR/.env"
+        fi
+        echo "[spawn] KICK_WEBHOOK_URL synced to: $WEBHOOK_URL"
+    else
+        echo "[spawn] WARNING: Could not find tunnel URL after 40s - continuing anyway"
+    fi
+else
+    echo "[spawn] WARNING: cloudflared not found at $CLOUDFLARED"
+fi
 
 # Start deletion detector in background
 "$DELETION_DETECTOR_DIR/venv/bin/python" "$DELETION_DETECTOR_DIR/bot.py" >> "$LOG_DIR/deletion-detector-$(date +%Y-%m-%d).log" 2>&1 &

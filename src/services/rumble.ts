@@ -109,6 +109,17 @@ export class RumbleService implements PlatformService {
       // Start polling for messages
       this.startPolling();
 
+      // Initialize browser-based chat for sending messages (awaited to prevent race)
+      if (liveStream?.id) {
+        logger.info('Initializing Rumble chat browser for outgoing messages...');
+        const browserReady = await rumbleCookieManager.initializeChatBrowser(liveStream.id);
+        if (browserReady) {
+          logger.info('✅ Rumble chat browser ready for outgoing messages');
+        } else {
+          logger.warn('⚠️ Rumble chat browser init failed - outgoing messages may not work');
+        }
+      }
+
       this.status.connected = true;
       this.isConnecting = false;
       logger.info('Successfully connected to Rumble');
@@ -240,6 +251,9 @@ export class RumbleService implements PlatformService {
       this.pollingInterval = null;
     }
 
+    // Close the chat browser
+    await rumbleCookieManager.closeChatBrowser();
+
     this.status.connected = false;
     this.isConnecting = false;
     this.processedMessageIds.clear();
@@ -258,30 +272,24 @@ export class RumbleService implements PlatformService {
       return undefined;
     }
 
-    let chatEndpoint = ''; // Declare in outer scope for error handling
-
     try {
-      // Get chat ID from cookie manager
-      let chatId = await rumbleCookieManager.getChatId();
+      // Get the live stream ID for browser navigation
+      let streamId = await rumbleCookieManager.getChatId();
 
-      // If we don't have a chat ID yet, try to get it from the API
-      if (!chatId) {
+      if (!streamId) {
         const response = await axios.get<RumbleApiResponse>(this.apiUrl, {
           timeout: 10000
         });
 
         const liveStream = response.data.livestreams?.find(stream => stream.is_live);
         if (liveStream?.id) {
-          chatId = liveStream.id;
-          await rumbleCookieManager.setChatId(chatId);
+          streamId = liveStream.id;
+          await rumbleCookieManager.setChatId(streamId);
         } else {
           logger.warn('No active Rumble stream found - cannot send message');
           return undefined;
         }
       }
-
-      // Get authentication cookies
-      const cookies = await rumbleCookieManager.getCookies();
 
       // Prepare message content
       let messageContent = content;
@@ -298,56 +306,23 @@ export class RumbleService implements PlatformService {
         }
       }
 
-      // Send message to Rumble chat API
-      chatEndpoint = `https://web7.rumble.com/chat/api/chat/${chatId}/stream`;
+      logger.info(`[RUMBLE] Sending message via browser automation: "${messageContent.substring(0, 50)}..."`);
 
-      const payload = {
-        type: 'messages',
-        messages: [
-          {
-            text: messageContent
-          }
-        ]
-      };
+      // Use Puppeteer browser automation to type message into Rumble chat
+      const success = await rumbleCookieManager.sendMessageViaBrowser(messageContent, streamId);
 
-      logger.debug(`[RUMBLE] Sending to endpoint: ${chatEndpoint}`);
-      logger.debug(`[RUMBLE] Payload: ${JSON.stringify(payload)}`);
-
-      const response = await axios.post(chatEndpoint, payload, {
-        headers: {
-          'Cookie': cookies,
-          'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'Origin': 'https://rumble.com',
-          'Referer': `https://rumble.com/user/Gritzpup/live`
-        },
-        timeout: 10000
-      });
-
-      if (response.status === 200) {
+      if (success) {
         this.status.messagesSent++;
         logPlatformMessage('Rumble', 'out', messageContent, 'bot');
-        logger.info('[RUMBLE] Message sent successfully');
-        return `rumble-${Date.now()}`; // Return a synthetic message ID
+        logger.info('[RUMBLE] Message sent successfully via browser');
+        return `rumble-${Date.now()}`;
       }
 
-      logger.warn('[RUMBLE] Unexpected response from chat API:', response.status);
+      logger.warn('[RUMBLE] Browser send failed');
       return undefined;
 
     } catch (error: any) {
-      if (error.response?.status === 401 || error.response?.status === 403) {
-        logger.error('[RUMBLE] Authentication failed - cookies may be expired');
-        logger.error('[RUMBLE] Please re-authenticate by restarting the relayer');
-      } else if (error.response?.status === 400) {
-        logger.error('[RUMBLE] Bad Request (400) - API endpoint or payload format may be incorrect');
-        logger.error(`[RUMBLE] Endpoint: ${chatEndpoint}`);
-        logger.error(`[RUMBLE] Response: ${JSON.stringify(error.response?.data)}`);
-      } else if (error.response?.status === 500) {
-        logger.error('[RUMBLE] Server error - chat API may not be available');
-      } else {
-        logError(error as Error, 'Failed to send message to Rumble');
-      }
+      logError(error as Error, 'Failed to send message to Rumble');
       return undefined;
     }
   }

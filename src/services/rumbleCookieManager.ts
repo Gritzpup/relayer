@@ -14,6 +14,9 @@ export class RumbleCookieManager {
   private cookieFile: string;
   private cookieData: RumbleCookieData | null = null;
   private authServer: any = null;
+  private chatBrowser: any = null;
+  private chatPage: any = null;
+  private chatInitialized: boolean = false;
 
   constructor() {
     this.cookieFile = path.join(process.cwd(), 'rumble_cookies.json');
@@ -86,6 +89,210 @@ export class RumbleCookieManager {
   private async saveCookieData(): Promise<void> {
     if (this.cookieData) {
       await fs.writeFile(this.cookieFile, JSON.stringify(this.cookieData, null, 2));
+    }
+  }
+
+  /**
+   * Initialize a persistent headless browser for sending chat messages.
+   * Called once during connect, reused for all messages to avoid per-message launch overhead.
+   */
+  async initializeChatBrowser(streamId: string): Promise<boolean> {
+    if (this.chatInitialized && this.chatPage && !this.chatPage.isClosed()) {
+      logger.debug('[RUMBLE BROWSER] Chat browser already initialized');
+      return true;
+    }
+
+    const puppeteer = require('puppeteer-core');
+
+    try {
+      const cookies = await this.getCookies();
+      if (!cookies) {
+        logger.error('[RUMBLE BROWSER] No cookies available for browser init');
+        return false;
+      }
+
+      const username = this.cookieData?.username || 'Gritzpup';
+
+      logger.info('[RUMBLE BROWSER] Launching persistent headless Brave for chat...');
+
+      this.chatBrowser = await puppeteer.launch({
+        executablePath: '/usr/bin/brave-browser-stable',
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--window-size=1280,720'
+        ]
+      });
+
+      this.chatPage = await this.chatBrowser.newPage();
+
+      // Set cookies on the rumble.com domain
+      const cookiePairs = cookies.split('; ').filter(Boolean);
+      for (const pair of cookiePairs) {
+        const [name, ...valueParts] = pair.split('=');
+        const value = valueParts.join('=');
+        if (name && value) {
+          await this.chatPage.setCookie({
+            name: name.trim(),
+            value: value.trim(),
+            domain: '.rumble.com',
+            path: '/'
+          });
+        }
+      }
+
+      // Navigate to the live stream page using the authenticated username
+      const liveUrl = `https://rumble.com/user/${username}/live`;
+      logger.info(`[RUMBLE BROWSER] Navigating to ${liveUrl}...`);
+
+      await this.chatPage.goto(liveUrl, {
+        waitUntil: 'networkidle2',
+        timeout: 30000
+      });
+
+      // Wait for chat to load
+      logger.info('[RUMBLE BROWSER] Waiting for chat to load...');
+      await this.waitForChatInput();
+
+      this.chatInitialized = true;
+      logger.info('[RUMBLE BROWSER] Chat browser initialized and ready');
+      return true;
+
+    } catch (error: any) {
+      logger.error('[RUMBLE BROWSER] Failed to initialize chat browser:', error.message);
+      await this.closeChatBrowser();
+      return false;
+    }
+  }
+
+  /**
+   * Wait for the chat input to appear on the page (in iframe or main page).
+   */
+  private async waitForChatInput(): Promise<void> {
+    const startTime = Date.now();
+    const timeout = 15000;
+
+    while (Date.now() - startTime < timeout) {
+      // Try finding chat iframe
+      const frames = this.chatPage.frames();
+      for (const frame of frames) {
+        const url = frame.url();
+        if (url.includes('chat') || url.includes('popout')) {
+          logger.info(`[RUMBLE BROWSER] Found chat frame: ${url}`);
+          return;
+        }
+      }
+
+      // Also try finding chat input directly on main page
+      const hasInput = await this.chatPage.evaluate(() => {
+        const el = document.querySelector('textarea, [contenteditable="true"], input[type="text"]');
+        return !!el;
+      });
+
+      if (hasInput) {
+        logger.info('[RUMBLE BROWSER] Found chat input on main page');
+        return;
+      }
+
+      await new Promise(r => setTimeout(r, 1000));
+    }
+
+    throw new Error('Chat input not found after timeout');
+  }
+
+  /**
+   * Close the persistent chat browser.
+   */
+  async closeChatBrowser(): Promise<void> {
+    this.chatInitialized = false;
+    if (this.chatPage) {
+      try { await this.chatPage.close(); } catch (e) {}
+      this.chatPage = null;
+    }
+    if (this.chatBrowser) {
+      try { await this.chatBrowser.close(); } catch (e) {}
+      this.chatBrowser = null;
+    }
+    logger.info('[RUMBLE BROWSER] Chat browser closed');
+  }
+
+  /**
+   * Send a message to Rumble chat using the persistent Puppeteer browser.
+   * This bypasses Rumble's broken/missing REST API by typing directly into the chat.
+   */
+  async sendMessageViaBrowser(message: string, streamId: string): Promise<boolean> {
+    try {
+      // Initialize browser if not already done
+      if (!this.chatInitialized || !this.chatPage || this.chatPage.isClosed()) {
+        logger.info('[RUMBLE BROWSER] Chat browser not initialized, initializing now...');
+        const ok = await this.initializeChatBrowser(streamId);
+        if (!ok) return false;
+      }
+
+      // Find the active chat input (iframe or main page)
+      let target: any = this.chatPage;
+      const frames = this.chatPage.frames();
+      for (const frame of frames) {
+        const url = frame.url();
+        if (url.includes('chat') || url.includes('popout')) {
+          target = frame;
+          break;
+        }
+      }
+
+      // Focus the chat input by clicking it
+      logger.info(`[RUMBLE BROWSER] Sending message: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}"`);
+
+      const inputSelector = 'textarea, [contenteditable="true"], input[type="text"]';
+      
+      // Click the input to focus it
+      await target.click(inputSelector, { timeout: 5000 }).catch(() => {
+        logger.warn('[RUMBLE BROWSER] Could not click chat input with selector, trying focus');
+      });
+
+      // Wait for focus
+      await new Promise(r => setTimeout(r, 300));
+
+      // Check if an input-like element is actually focused before Ctrl+A
+      const isFocused = await target.evaluate(() => {
+        const el = document.activeElement;
+        return el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.getAttribute('contenteditable') === 'true');
+      });
+
+      if (isFocused) {
+        // Clear existing text only if an input is focused
+        await target.keyboard.down('Control');
+        await target.keyboard.press('KeyA');
+        await target.keyboard.up('Control');
+        await target.keyboard.press('Backspace');
+      }
+
+      // Type the message
+      await target.keyboard.type(message, { delay: 10 });
+
+      // Small delay before pressing Enter
+      await new Promise(r => setTimeout(r, 500));
+
+      // Press Enter to send
+      await target.keyboard.press('Enter');
+
+      logger.info('[RUMBLE BROWSER] Message sent via browser!');
+
+      // Brief wait to let the message go through
+      await new Promise(r => setTimeout(r, 1000));
+
+      return true;
+
+    } catch (error: any) {
+      logger.error('[RUMBLE BROWSER] Failed to send message via browser:', error.message);
+      // If the page crashed, reset so next message reinitializes
+      if (error.message?.includes('closed') || error.message?.includes('detached')) {
+        await this.closeChatBrowser();
+      }
+      return false;
     }
   }
 
