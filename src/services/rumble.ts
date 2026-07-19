@@ -142,11 +142,12 @@ export class RumbleService implements PlatformService {
         const liveStream = response.data.livestreams?.find(stream => stream.is_live);
 
         if (!liveStream) {
-          // No live stream - clear processed messages when stream ends
+          // No live stream - clear processed messages when stream ends.
+          // Do NOT reset isFirstPoll — only the very first connection ever
+          // should skip recent messages; stream transitions should relay them.
           if (this.processedMessageIds.size > 0) {
             logger.debug('Rumble stream ended - clearing processed messages');
             this.processedMessageIds.clear();
-            isFirstPoll = true; // Reset for next stream
           }
           this.currentStreamId = null;
           return;
@@ -168,9 +169,12 @@ export class RumbleService implements PlatformService {
             logger.warn('⚠️ Chat browser init failed for new stream — will retry on next message');
           }
 
-          // Reset processed messages for new stream
+          // Reset processed messages for the new stream.
+          // Do NOT set isFirstPoll = true here — that would mark all current
+          // recent_messages as "already processed" and silently drop any chat
+          // messages sent right when the new stream starts. Only initial
+          // startup should skip; transitions should relay the fresh chat.
           this.processedMessageIds.clear();
-          isFirstPoll = true;
         }
 
         const messages = liveStream.chat?.recent_messages || [];
