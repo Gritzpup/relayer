@@ -234,9 +234,9 @@ export class RumbleService implements PlatformService {
       // Check if this is a relayed message - messages that contain platform prefix tags.
       // Puppeteer keyboard.type() may strip emoji characters, leaving a leading space
       // from the formatter's "🟣 [Telegram]" → " [Telegram]". trimStart() handles this.
-      const trimmed = messageText.trimStart();
-      const isRelayedMessage = /^\[(Telegram|Discord|Twitch|Kick|YouTube|Rumble|𝐓𝐞𝐥𝐞𝐠𝐫𝐚𝐦|𝐃𝐢𝐬𝐜𝐨𝐫𝐝|𝐓𝐰𝐢𝐭𝐜𝐡|𝐊𝐢𝐜𝐤|𝐘𝐨𝐮𝐓𝐮𝐛𝐞|𝐑𝐮𝐦𝐛𝐥𝐞)\]/.test(trimmed) ||
-        /^(🔵|🟣|🔴|🟢|✈️|🎮|💬|🎬)/.test(trimmed);
+      const stripped = messageText.trimStart().replace(/^\[EDITED\][\s\u00A0]*/, "");
+      const isRelayedMessage = /^\[(Telegram|Discord|Twitch|Kick|YouTube|Rumble|𝐓𝐞𝐥𝐞𝐠𝐫𝐚𝐦|𝐃𝐢𝐬𝐜𝐨𝐫𝐝|𝐓𝐰𝐢𝐭𝐜𝐡|𝐊𝐢𝐜𝐤|𝐘𝐨𝐮𝐓𝐮𝐛𝐞|𝐑𝐮𝐦𝐛𝐥𝐞)\]/.test(stripped) ||
+        /^(🔵|🟣|🔴|🟢|✈️|🎮|💬|🎬)/.test(stripped);
 
       if (isRelayedMessage) {
         logger.debug(`Rumble: Skipping relayed message: "${messageText.substring(0, 50)}..."`);
