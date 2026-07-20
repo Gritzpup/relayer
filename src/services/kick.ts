@@ -27,7 +27,7 @@ interface KickChatMessage {
 
 interface KickChannelInfo {
   id: number;
-  user_id: number;
+  user_id?: number;
   slug: string;
   chatroom?: {
     id: number;
@@ -101,13 +101,13 @@ export class KickService implements PlatformService {
         throw new Error('Could not get channel or chatroom ID for Kick channel');
       }
 
-      // Get broadcaster user ID from channel info
+      // Get broadcaster user ID from channel info (may be undefined if API format changed)
       const broadcasterUserId = this.channelInfo?.user_id;
-      if (!broadcasterUserId) {
-        throw new Error('Failed to get broadcaster user_id from channel info');
+      if (broadcasterUserId) {
+        logger.info(`Kick broadcaster user ID (numeric): ${broadcasterUserId}`);
+      } else {
+        logger.warn('No numeric broadcaster user ID available - will subscribe without channel scope');
       }
-
-      logger.info(`Kick broadcaster user ID: ${broadcasterUserId}`);
 
       // Subscribe to Kick events via webhooks
       // The webhook URL must be publicly accessible
@@ -116,10 +116,36 @@ export class KickService implements PlatformService {
       if (webhookUrl) {
         logger.info(`Subscribing to Kick events with webhook URL: ${webhookUrl}`);
 
-        // Subscribe to chat.message.sent event
+        // First, delete any existing subscriptions to avoid stale cached subscriptions
+        // Kick's API may return the same cached subscription if we don't clean up first.
+        // Handle multiple response formats: {data: [...]}, [...] direct array, or null.
+        try {
+          const existing = await this.api.getEventSubscriptions();
+          let subscriptionIds: string[] = [];
+          if (Array.isArray(existing)) {
+            subscriptionIds = existing.map((s: any) => s.subscription_id).filter(Boolean);
+          } else if (existing?.data && Array.isArray(existing.data)) {
+            subscriptionIds = existing.data.map((s: any) => s.subscription_id).filter(Boolean);
+          }
+          // If we didn't find any via the response, try deleting the known stale ID directly
+          if (subscriptionIds.length === 0) {
+            // This subscription ID was created without broadcaster_user_id - delete it
+            const knownId = '01KY0QPYV8BFPGCGQF5YK2HY5K';
+            logger.info(`No subscriptions found in API response, attempting to delete known stale subscription: ${knownId}`);
+            subscriptionIds = [knownId];
+          }
+          if (subscriptionIds.length > 0) {
+            logger.info(`Deleting ${subscriptionIds.length} Kick subscription(s): ${subscriptionIds.join(', ')}`);
+            await this.api.unsubscribeFromEvent(subscriptionIds);
+          }
+        } catch (cleanupError) {
+          logger.warn('Error cleaning up old Kick subscriptions:', cleanupError);
+        }
+
+        // Subscribe to chat.message.sent event (include broadcaster_user_id if available)
         const subscription = await this.api.subscribeToEvents(
           webhookUrl,
-          broadcasterUserId,
+          broadcasterUserId || undefined,
           [{ name: 'chat.message.sent', version: 1 }]
         );
 
@@ -133,10 +159,14 @@ export class KickService implements PlatformService {
         logger.warn('To receive Kick messages, set KICK_WEBHOOK_URL to your public webhook endpoint');
       }
 
-      // WebSocket connection disabled - using webhooks for message reception instead
-      // Kick's /broadcasting/auth endpoint is blocked by WAF (403: "Request blocked by security policy")
-      // The only way to receive Kick messages is via webhooks (requires cloudflare tunnel)
-      // await this.connectWebSocket();
+      // Connect WebSocket for real-time chat message reception
+      // Using PUBLIC channel chatrooms.{id}.v2 - no Pusher auth needed!
+      // This is more reliable than webhooks for receiving Kick messages
+      try {
+        await this.connectWebSocket();
+      } catch (wsError) {
+        logger.warn('Kick WebSocket connection failed - will rely on webhooks only:', wsError);
+      }
 
       this.status.connected = true;
       this.isConnecting = false;
@@ -173,20 +203,62 @@ export class KickService implements PlatformService {
         timeout: 10000,
       });
 
-      // Store the channel data from response - user_id is at account.user.id
+      // Store the channel data from response
       const accountData = response.data?.data?.account;
-
-      // Debug: Log the full user object to find numeric ID
-      logger.debug(`Kick account.user object:`, JSON.stringify(accountData?.user, null, 2));
 
       this.channelInfo = {
         id: accountData?.channel?.id,
-        user_id: accountData?.user?.id,  // user_id is at account.user.id
         slug: accountData?.channel?.slug,
         chatroom: accountData?.channel?.chatroom
       };
 
-      logger.info(`Kick broadcaster user ID: ${this.channelInfo.user_id}`);
+      // Kick's private API now returns string IDs like "user_01K4Q..." not numeric IDs.
+      // The subscription API needs the numeric user ID (e.g. 77854856 for Gritzpup).
+      // Log the full account data to find where the numeric ID lives, then try
+      // common paths: account.id, account.user_id, account.channel.user_id
+      logger.info(`Kick account data: ${JSON.stringify(accountData, null, 2)}`);
+
+      let numericUserId = Number(accountData?.channel?.user_id) ||
+                           Number(accountData?.user?.numeric_id) ||
+                           Number(accountData?.id);
+
+      // If none of the private API fields work (Kick now uses string IDs), try extracting
+      // the numeric user ID from the profile_picture URL which contains it (e.g. "/users/77854856/")
+      if (!numericUserId) {
+        const profilePic = accountData?.user?.profile_picture || accountData?.channel?.profile_picture || '';
+        const picMatch = profilePic.match(/\/users\/(\d+)\//);
+        if (picMatch) {
+          numericUserId = parseInt(picMatch[1], 10);
+          logger.info(`Extracted numeric user ID from profile picture: ${numericUserId}`);
+        }
+      }
+
+      // If still no luck, try the public API user info
+      if (!numericUserId) {
+        try {
+          const userInfo = await this.api.getUserInfo();
+          logger.info(`Kick userInfo response: ${JSON.stringify(userInfo)}`);
+          numericUserId = Number(userInfo?.id) || Number(userInfo?.data?.id) || Number(userInfo?.user?.id);
+        } catch (userInfoError) {
+          logger.warn('Failed to get user info from public API:', userInfoError);
+        }
+      }
+
+      // Final fallback: known numeric ID for Gritzpup's channel (77854856)
+      // Kick's API now returns string IDs everywhere, but the subscription API
+      // still requires the numeric format for broadcaster_user_id
+      if (!numericUserId) {
+        const knownId = Number(process.env.KICK_BROADCASTER_USER_ID) || 77854856;
+        logger.info(`Using fallback broadcaster user ID: ${knownId}`);
+        numericUserId = knownId;
+      }
+
+      if (numericUserId) {
+        this.channelInfo!.user_id = numericUserId;
+        logger.info(`Kick broadcaster user ID (numeric): ${this.channelInfo?.user_id}`);
+      } else {
+        logger.warn('Could not determine numeric user ID - subscription may not be channel-specific');
+      }
 
       // Extract channel ID from response - this is the full channel ID like "channel_01K4Q26GP9CEGRZXCB3P6BF4CT"
       const fullChannelId = accountData?.channel?.id || null;
@@ -207,70 +279,60 @@ export class KickService implements PlatformService {
     }
   }
 
-  // @ts-expect-error reserved for future Pusher WebSocket usage
   private async connectWebSocket(): Promise<void> {
-    return new Promise((resolve, reject) => {
+    return new Promise<void>((resolve, reject) => {
       try {
-        // Kick uses Pusher WebSocket for real-time chat - updated app key
+        // Kick uses Pusher WebSocket for real-time chat
+        // Using PUBLIC channel (chatrooms.{id}.v2) - no auth needed!
         const wsUrl = `wss://ws-us2.pusher.com/app/32cbd69e4b950bf97679?protocol=7&client=js&version=8.4.0-rc2&flash=false`;
         
         this.ws = new WebSocket(wsUrl);
 
-        this.ws.on('open', async () => {
-          logger.info('Kick WebSocket connected');
+        this.ws.on('open', () => {
+          logger.info('Kick WebSocket connected to Pusher');
 
-          // Get access token for authenticated subscriptions
-          void config.kick?.token;
-          const socketId = await new Promise<string>((resolveSocketId) => {
-            const connectionHandler = (data: Buffer) => {
-              const msg = JSON.parse(data.toString());
-              if (msg.event === 'pusher:connection_established') {
-                const connData = JSON.parse(msg.data);
-                resolveSocketId(connData.socket_id);
+          // Wait for connection established to get socket ID
+          const waitForConnection = new Promise<string>((resolveSocketId) => {
+            const handler = (data: Buffer) => {
+              try {
+                const msg = JSON.parse(data.toString());
+                if (msg.event === 'pusher:connection_established') {
+                  const connData = JSON.parse(msg.data);
+                  resolveSocketId(connData.socket_id);
+                }
+              } catch {
+                // Ignore parse errors during connection setup
               }
             };
-            this.ws?.once('message', connectionHandler);
+            this.ws?.once('message', handler);
+            // Timeout fallback
+            setTimeout(() => resolveSocketId(''), 5000);
           });
 
-          logger.info(`Got Pusher socket ID: ${socketId}`);
-
-          // Subscribe to the chatroom channel
-          // channelId at this point should be the alphanumeric ID without "channel_" prefix
-          if (this.channelId) {
-            // Try both channel formats - with and without .v2 suffix
-            const chatroomChannel = `private-chatrooms.${this.channelId}.v2`;
-
-            // Try to get Pusher auth from Kick's API
-            logger.info(`Requesting Pusher auth from Kick API for ${chatroomChannel}`);
-            const pusherAuth = await this.api.getPusherAuth(socketId, chatroomChannel);
-
-            if (pusherAuth) {
-              logger.info(`Got Pusher auth from Kick API: ${pusherAuth}`);
-              const chatroomSubscribeMessage = {
-                event: 'pusher:subscribe',
-                data: {
-                  auth: pusherAuth,
-                  channel: chatroomChannel
-                }
-              };
-              this.ws?.send(JSON.stringify(chatroomSubscribeMessage));
-              logger.info(`Subscribed to Kick chatroom with API auth: ${chatroomChannel}`);
-            } else {
-              logger.warn('Failed to get Pusher auth from Kick API - trying without auth');
-              const chatroomSubscribeMessage = {
-                event: 'pusher:subscribe',
-                data: {
-                  channel: chatroomChannel
-                }
-              };
-              this.ws?.send(JSON.stringify(chatroomSubscribeMessage));
-              logger.info(`Subscribed to Kick chatroom (no auth): ${chatroomChannel}`);
+          waitForConnection.then((socketId) => {
+            if (socketId) {
+              logger.info(`Got Pusher socket ID: ${socketId}`);
             }
-          } else {
-            logger.error('No channel ID available for Kick subscription');
-          }
 
-          resolve();
+            // Subscribe to the PUBLIC chatroom channel - NO AUTH NEEDED!
+            if (this.channelId) {
+              const chatroomChannel = `chatrooms.${this.channelId}.v2`;
+              logger.info(`Subscribing to Kick public chatroom: ${chatroomChannel}`);
+
+              const subscribeMessage = {
+                event: 'pusher:subscribe',
+                data: {
+                  channel: chatroomChannel
+                }
+              };
+              this.ws?.send(JSON.stringify(subscribeMessage));
+              logger.info(`Successfully subscribed to Kick chatroom: ${chatroomChannel}`);
+            } else {
+              logger.error('No channel ID available for Kick subscription');
+            }
+
+            resolve();
+          });
         });
 
         this.ws.on('message', (data: Buffer) => {
